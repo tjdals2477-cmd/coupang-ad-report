@@ -5,29 +5,22 @@
 
 ## 온라인 배포 (Streamlit Community Cloud · 무료)
 
-> 광고 성과는 영업 자료이므로 **비공개(Private) 저장소 + 비공개 앱**으로 운영합니다.
-> 무료 플랜은 비공개 앱을 1개까지 만들 수 있습니다.
+공개 앱 + **접속 비밀번호** 방식으로 운영합니다. 저장소에는 코드만 있고(광고 데이터 없음),
+업로드한 엑셀은 서버 메모리에서만 잠시 처리됩니다.
 
-### 1. 깃허브에 올리기
-1. <https://github.com/new> 에서 저장소 생성 — 이름 예: `coupang-ad-report`, **Private** 선택, README 추가 체크 해제
-2. 이 폴더를 그 저장소로 푸시 (처음 한 번 깃허브 로그인 창이 뜹니다)
+### 접속 비밀번호 설정 / 변경
+1. <https://share.streamlit.io> → 앱 오른쪽 `⋮` → **Settings** → **Secrets**
+2. 아래 한 줄을 입력하고 저장 (따옴표 포함)
    ```
-   git remote add origin https://github.com/<내아이디>/coupang-ad-report.git
-   git push -u origin main
+   APP_PASSWORD = "원하는 비밀번호"
    ```
-
-### 2. 앱 배포
-1. <https://share.streamlit.io> 에서 **Continue with GitHub**로 로그인 → 비공개 저장소 접근 허용
-2. **Create app → Deploy a public app from GitHub** 대신 저장소 목록에서 위 저장소 선택
-   - Branch: `main` · Main file path: `app.py`
-   - App URL: 원하는 주소 입력 (예: `coupang-ad-report`)
-3. **Deploy** → 2~3분 뒤 `https://<주소>.streamlit.app` 링크 생성
-
-### 3. 접속자 지정
-앱 우측 상단 **Share** → 이메일로 팀원 초대. 초대된 사람만 접속할 수 있습니다.
+3. 비밀번호가 설정되지 않으면 앱은 열리지 않습니다. 로컬 `실행.bat`은 비밀번호 없이 열립니다.
 
 ### 수정 반영
 코드를 고친 뒤 `git push` 하면 앱이 자동으로 다시 배포됩니다.
+
+### 새로 배포할 때
+share.streamlit.io › **Create app** › 저장소 `coupang-ad-report` · Branch `main` · Main file path `app.py`
 
 ## 참고
 - 한동안 접속이 없으면 앱이 잠들며, 다음 접속 시 깨우는 데 수십 초가 걸립니다.
