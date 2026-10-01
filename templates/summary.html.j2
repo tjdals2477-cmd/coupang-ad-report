@@ -1,0 +1,91 @@
+{%- macro chg(d) -%}{%- if d -%}<div class="chg {{ d.dir }}">{{ d.text }}</div>{%- else -%}<div class="chg"></div>{%- endif -%}{%- endmacro -%}
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ title }}</title>
+{% include "_style.html.j2" %}
+<style>
+  .section{opacity:1; transform:none;}
+  .acc-table td.acc{font-weight:800; text-align:left;}
+  .acc-table td .chg{margin:0; min-height:0;}
+  .share-bar{height:12px; border-radius:6px; background:var(--border); overflow:hidden; display:flex; margin-top:10px;}
+  .share-bar i{display:block; height:100%;}
+  .share-legend{display:flex; flex-wrap:wrap; gap:14px; font-size:12px; color:var(--sub); margin-top:8px;}
+  .share-legend span{display:flex; align-items:center; gap:6px;}
+  .share-legend b{width:10px; height:10px; border-radius:2px; display:inline-block;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="eyebrow">쿠팡 광고 운영 보고 · 계정 통합</span>
+    <h1>{{ title }}</h1>
+    <div class="meta">{{ prev_label }} vs {{ cur_label }} · {{ rows|length }}개 계정 합산</div>
+  </header>
+
+  <div class="section" style="margin-top:0;">
+    <div class="section-head">
+      <p class="section-title">전 계정 합산 핵심 지표</p>
+      <p class="section-sub">각 계정 보고서에 내장된 수치를 합산 (ROAS·CVR은 합계 기준 재계산){% if mixed_period %} · ⚠️ 계정별 기간 라벨이 서로 다릅니다{% endif %}</p>
+    </div>
+    <div class="pc-grid">
+      {%- for k in kpis %}
+      <div class="pc-card">
+        <div class="pc-label">{{ k.label }}</div>
+        <div class="pc-row prev"><span class="pc-tag">{{ prev_label }}</span>{% if k.prev %}<span class="pc-num">{{ k.prev }}</span>{% else %}<span class="pc-num pending">일부 미입력</span>{% endif %}</div>
+        <div class="pc-row cur"><span class="pc-tag">{{ cur_label }}</span>{% if k.cur %}<span class="pc-num">{{ k.cur }}</span>{% else %}<span class="pc-num pending">일부 미입력</span>{% endif %}</div>
+        {{ chg(k.delta) }}
+      </div>
+      {%- endfor %}
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      <p class="section-title">계정별 {{ cur_label }} 성과 비교</p>
+      <p class="section-sub">증감은 각 계정의 직전월 대비</p>
+    </div>
+    {%- set colors = ['#5B4FE5', '#14b8a6', '#FF7A45', '#8C7CFF', '#2F6FED', '#E5484D'] %}
+    <div class="share-bar">{% for r in rows %}<i style="width:{{ '%.2f'|format(r.share) }}%; background:{{ colors[loop.index0 % 6] }};"></i>{% endfor %}</div>
+    <div class="share-legend">{% for r in rows %}<span><b style="background:{{ colors[loop.index0 % 6] }};"></b>{{ r.account }} {{ '%.1f'|format(r.share) }}%</span>{% endfor %}</div>
+    <p class="top5-note">↑ {{ cur_label }} 전체 광고비 중 계정별 비중</p>
+    <div class="table-wrap">
+      <table class="top5-table acc-table">
+        <tr><th>계정</th><th>광고비</th><th>광고전환매출</th><th>ROAS</th><th>CVR</th><th>총매출</th><th>광고비/총매출</th></tr>
+        {%- for r in rows %}
+        <tr>
+          <td class="acc">{{ r.account }}</td>
+          <td>{{ r.cost }}{{ chg(r.cost_d) }}</td>
+          <td>{{ r.revenue }}{{ chg(r.revenue_d) }}</td>
+          <td class="key">{{ r.roas }}{{ chg(r.roas_d) }}</td>
+          <td>{{ r.cvr }}{{ chg(r.cvr_d) }}</td>
+          <td>{{ r.sales }}</td>
+          <td>{{ r.ad_ratio }}</td>
+        </tr>
+        {%- endfor %}
+      </table>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head"><p class="section-title">계정별 핵심 캠페인</p></div>
+    <div class="camp-grid">
+      {%- for r in rows %}
+      <div class="camp-card">
+        <p class="camp-title">{{ r.account }}</p>
+        <div class="camp-meta"><span>광고비 1위(최대 이슈)</span></div>
+        <div class="camp-meta"><b style="white-space:normal;">{{ r.issue }}</b></div>
+        <div class="camp-meta sep"><span>최고 효율(ROAS)</span></div>
+        <div class="camp-meta"><b style="white-space:normal;">{{ r.best }}</b></div>
+      </div>
+      {%- endfor %}
+    </div>
+  </div>
+
+  <footer>각 계정 보고서의 내장 수치를 합산해 자동 생성되었습니다 · {{ title }}</footer>
+</div>
+{% include "_editor.html.j2" %}
+</body>
+</html>

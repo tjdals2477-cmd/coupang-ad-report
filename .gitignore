@@ -1,0 +1,13 @@
+# 광고 데이터·생성 보고서는 저장소에 올리지 않음 (영업 자료)
+*.xlsx
+*.xls
+*.csv
+*.json
+*.html
+!templates/*.html.j2
+
+# 비밀 설정 / 로컬 환경
+.streamlit/secrets.toml
+__pycache__/
+*.pyc
+.venv/

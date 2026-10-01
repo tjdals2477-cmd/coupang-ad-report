@@ -1,0 +1,191 @@
+{#- 다운로드 후 편집 기능: 편집 모드 토글 → 텍스트 직접 수정 → 수정본 HTML 저장.
+    통합 보고서 안에서 열리면(상위 창이 인사 메시지를 보냄) 수정 내용을 상위 창으로 보내고,
+    저장은 통합본 상단의 '통합본 저장' 버튼으로 한다. -#}
+<style>
+  .edit-kit{position:fixed; right:20px; bottom:20px; z-index:50; display:flex; align-items:center; gap:8px; padding:8px; border-radius:999px; background:rgba(255,255,255,.96); border:1px solid var(--border); box-shadow:0 10px 30px rgba(20,20,43,.14); backdrop-filter:blur(8px);}
+  .edit-kit button{font:800 12.5px/1 inherit; padding:9px 14px; border-radius:999px; border:1px solid var(--border); background:#fff; color:var(--sub); cursor:pointer; white-space:nowrap; transition:all .2s ease;}
+  .edit-kit button:hover{border-color:var(--indigo-light); color:var(--indigo);}
+  .edit-kit .ek-toggle.on{background:var(--indigo); border-color:var(--indigo); color:#fff;}
+  .edit-kit .ek-save{background:var(--teal); border-color:var(--teal); color:#fff;}
+  .edit-kit .ek-save:hover{color:#fff; filter:brightness(1.05);}
+  .edit-kit .ek-status{font-size:11.5px; font-weight:700; color:var(--sub); padding:0 6px; white-space:nowrap;}
+  .edit-kit .ek-status.dirty{color:var(--amber);}
+  body.editing [contenteditable="true"]{outline:1px dashed transparent; outline-offset:3px; border-radius:4px; cursor:text; transition:outline-color .15s ease, background .15s ease;}
+  body.editing [contenteditable="true"]:hover{outline-color:var(--indigo-light);}
+  body.editing [contenteditable="true"]:focus{outline:2px solid var(--indigo); background:rgba(91,79,229,.05);}
+  body.editing .edit-banner{display:block;}
+  .edit-banner{display:none; position:sticky; top:0; z-index:40; margin:-48px -28px 24px; padding:10px 28px; background:var(--indigo-bg); color:var(--indigo); font-size:12.5px; font-weight:700; border-bottom:1px solid var(--border);}
+  @media (max-width:720px){ .edit-kit{right:12px; left:12px; bottom:12px; justify-content:center;} .edit-banner{margin:-32px -16px 20px; padding:10px 16px;} }
+  @media print{ .edit-kit,.edit-banner{display:none !important;} }
+</style>
+
+<div class="edit-kit" data-edit-kit>
+  <span class="ek-status" aria-live="polite"></span>
+  <button type="button" class="ek-toggle" aria-pressed="false">✏️ 편집</button>
+  <button type="button" class="ek-save">💾 HTML 저장</button>
+</div>
+
+<script>
+(function(){
+  var EDITABLE = [
+    'h1', '.eyebrow', '.meta', '.section-title', '.section-sub',
+    '.pc-label', '.pc-num', '.pc-diff', '.chg',
+    '.focus-banner .txt > b', '.focus-banner .txt > span',
+    '.comp-name', '.comp-desc', '.comp-row .v', '.note', '.pending-box',
+    '.step-title', '.step-list', '.step-conc',
+    '.camp-title', '.camp-meta b', '.top5-note', '.top5-table td', '.empty', 'footer'
+  ].join(',');
+  var kit = document.querySelector('[data-edit-kit]');
+  var toggleBtn = kit.querySelector('.ek-toggle');
+  var saveBtn = kit.querySelector('.ek-save');
+  var status = kit.querySelector('.ek-status');
+  var editing = false, dirty = false, inShell = false, postTimer = null;
+
+  // 편집 안내 배너 (편집 모드에서만 보임)
+  var wrap = document.querySelector('.wrap');
+  var banner = document.createElement('div');
+  banner.className = 'edit-banner';
+  banner.setAttribute('data-edit-banner', '');
+  banner.textContent = '✏️ 편집 모드 — 점선 영역을 클릭해 수정하세요. ▲는 빨간색, ▼는 파란색으로 자동 표시됩니다. (Ctrl+S 저장)';
+  if (wrap) wrap.insertBefore(banner, wrap.firstChild);
+
+  function escapeHtml(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function colorize(s){
+    return escapeHtml(s).replace(/([▲▼])\s?([\d.,]+\s?%p?)/g, function(_, a, n){
+      return '<span class="d-' + (a === '▲' ? 'up' : 'down') + '">' + a + ' ' + n + '</span>';
+    });
+  }
+  // 수정한 증감 표기 색상 갱신
+  function refresh(el){
+    if (el.classList.contains('chg')){
+      var t = el.textContent.trim();
+      el.classList.remove('up', 'down', 'flat');
+      if (t.charAt(0) === '▲') el.classList.add('up');
+      else if (t.charAt(0) === '▼') el.classList.add('down');
+      else if (t) el.classList.add('flat');
+    } else if (el.classList.contains('step-list')){
+      var items = Array.prototype.slice.call(el.querySelectorAll('li'));
+      if (!items.length && el.textContent.trim()){ el.innerHTML = '<li></li>'; items = [el.firstChild]; items[0].textContent = el.textContent; }
+      items.forEach(function(li){
+        var t = li.textContent.trim();
+        if (!t) li.remove(); else li.innerHTML = colorize(t);
+      });
+    } else if (el.classList.contains('step-conc')){
+      el.innerHTML = colorize(el.textContent.trim());
+    }
+  }
+
+  function refreshAll(){
+    document.querySelectorAll('.chg, .step-list, .step-conc').forEach(refresh);
+  }
+
+  function setStatus(){
+    status.textContent = dirty ? (inShell ? '수정됨 · 통합본에 반영됨' : '수정됨 · 저장 필요') : '';
+    status.classList.toggle('dirty', dirty);
+  }
+
+  function setEditing(on){
+    editing = on;
+    document.body.classList.toggle('editing', on);
+    toggleBtn.classList.toggle('on', on);
+    toggleBtn.setAttribute('aria-pressed', String(on));
+    toggleBtn.textContent = on ? '✅ 편집 완료' : '✏️ 편집';
+    if (!on) refreshAll();
+    if (on){
+      // 진행 중인 리빌·카운트업을 마무리해 최종 값 상태에서 편집
+      document.querySelectorAll('.section').forEach(function(s){ s.classList.add('reveal'); });
+      document.querySelectorAll('.count-up').forEach(function(el){
+        var d = parseInt(el.dataset.decimals || '0', 10), v = parseFloat(el.dataset.target);
+        if (!isNaN(v)) el.textContent = new Intl.NumberFormat('ko-KR', {minimumFractionDigits:d, maximumFractionDigits:d}).format(v) + (el.dataset.suffix || '');
+      });
+      document.querySelectorAll('.goal-bar-fill').forEach(function(b){ b.style.width = b.dataset.fill + '%'; });
+    }
+    document.querySelectorAll(EDITABLE).forEach(function(el){
+      if (on) el.setAttribute('contenteditable', 'true');
+      else { el.removeAttribute('contenteditable'); }
+    });
+  }
+
+  // 저장용 HTML: 편집 상태·애니메이션 진행 상태를 걷어낸 깨끗한 문서
+  function snapshot(){
+    refreshAll();
+    var root = document.documentElement.cloneNode(true);
+    root.querySelectorAll('[contenteditable]').forEach(function(e){ e.removeAttribute('contenteditable'); });
+    root.querySelectorAll('.section.reveal').forEach(function(e){ e.classList.remove('reveal'); });
+    root.querySelectorAll('.goal-bar-fill').forEach(function(e){ e.style.removeProperty('width'); });
+    root.querySelectorAll('[data-edit-banner]').forEach(function(e){ e.remove(); });
+    var body = root.querySelector('body');
+    body.classList.remove('editing');
+    if (!body.getAttribute('class')) body.removeAttribute('class');
+    var k = root.querySelector('[data-edit-kit]');
+    k.querySelector('.ek-status').textContent = '';
+    k.querySelector('.ek-status').classList.remove('dirty');
+    var t = k.querySelector('.ek-toggle');
+    t.classList.remove('on'); t.setAttribute('aria-pressed', 'false'); t.textContent = '✏️ 편집';
+    return '<!DOCTYPE html>\n' + root.outerHTML;
+  }
+
+  function download(){
+    var blob = new Blob([snapshot()], {type:'text/html;charset=utf-8'});
+    var a = document.createElement('a');
+    var name = (document.title || '보고서').replace(/[\\/:*?"<>|]/g, '_');
+    a.href = URL.createObjectURL(blob);
+    a.download = name + '_수정본.html';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 1000);
+    dirty = false; setStatus();
+  }
+
+  function pushToShell(){
+    if (!inShell) return;
+    clearTimeout(postTimer);
+    postTimer = setTimeout(function(){
+      window.parent.postMessage({type:'coupang-report:update', html: snapshot()}, '*');
+    }, 400);
+  }
+
+  function markDirty(target){
+    if (!editing) return;
+    var el = target && target.closest ? target.closest('[contenteditable="true"]') : null;
+    if (el) el.classList.remove('count-up');   // 직접 고친 숫자는 다시 애니메이션하지 않음
+    if (el && el.classList.contains('chg')) refresh(el);  // 클래스만 바꾸므로 입력 중에도 안전
+    dirty = true; setStatus(); pushToShell();
+  }
+
+  document.addEventListener('input', function(e){ markDirty(e.target); });
+  document.addEventListener('focusout', function(e){
+    if (!editing || !e.target.closest) return;
+    var el = e.target.closest('[contenteditable="true"]');
+    if (el){ refresh(el); pushToShell(); }
+  });
+  document.addEventListener('keydown', function(e){
+    if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')){
+      e.preventDefault();
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+      if (!inShell) download();
+    }
+  });
+  toggleBtn.addEventListener('click', function(){
+    if (editing && document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    setEditing(!editing);
+  });
+  saveBtn.addEventListener('click', function(){
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    download();
+  });
+
+  // 통합 보고서 안에서 열렸는지: 상위 창의 인사 메시지로 판단
+  window.addEventListener('message', function(e){
+    if (e.source === window.parent && e.data && e.data.type === 'coupang-shell:hello'){
+      inShell = true;
+      saveBtn.style.display = 'none';
+      status.textContent = '';
+    }
+  });
+  window.addEventListener('beforeunload', function(e){
+    if (dirty && !inShell){ e.preventDefault(); e.returnValue = ''; }
+  });
+
+  window.__reportEditor = {snapshot: snapshot, setEditing: setEditing};
+})();
+</script>

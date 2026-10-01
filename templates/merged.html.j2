@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <style>
+    :root{--bg:#FAFAFF;--card:#fff;--border:#E4E4F0;--text:#14142B;--sub:#6E7191;--indigo:#5B4FE5;--indigo-light:#8C7CFF;}
+    *{box-sizing:border-box;}
+    body{margin:0;background:var(--bg);color:var(--text);font-family:'Pretendard','Apple SD Gothic Neo','Malgun Gothic',sans-serif;}
+    .shell-nav{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:14px;padding:12px max(20px,calc((100vw - 1040px)/2));background:rgba(250,250,255,.95);border-bottom:1px solid var(--border);backdrop-filter:blur(12px);}
+    .shell-nav__label{flex:0 0 auto;color:var(--sub);font-size:12px;font-weight:800;white-space:nowrap;}
+    .shell-nav__buttons{display:flex;flex-wrap:wrap;gap:7px;}
+    .shell-nav button{border:1px solid var(--border);border-radius:999px;padding:7px 12px;background:var(--card);color:var(--sub);font:700 12px/1 inherit;cursor:pointer;transition:transform .2s ease,background .2s ease,border-color .2s ease,color .2s ease;}
+    .shell-nav button:hover,.shell-nav button:focus-visible{transform:translateY(-1px);border-color:var(--indigo-light);color:var(--indigo);outline:none;}
+    .shell-nav button[aria-selected="true"]{background:var(--indigo);border-color:var(--indigo);color:#fff;}
+    #report-frame{display:block;width:100%;height:calc(100vh - 62px);height:calc(100svh - 62px);border:0;background:var(--bg);}
+    .shell-nav .shell-save{margin-left:auto;flex:0 0 auto;display:none;background:#14b8a6;border-color:#14b8a6;color:#fff;}
+    .shell-nav .shell-save:hover,.shell-nav .shell-save:focus-visible{color:#fff;border-color:#14b8a6;filter:brightness(1.05);}
+    .shell-nav .shell-save.show{display:inline-block;}
+    @media(max-width:720px){.shell-nav .shell-save{margin-left:0;width:100%;}}
+    @media(max-width:720px){.shell-nav{align-items:flex-start;flex-direction:column;gap:8px;padding:10px 16px;}.shell-nav__buttons{width:100%;}.shell-nav button{flex:1 1 42%;padding-inline:8px;}#report-frame{height:calc(100vh - 111px);height:calc(100svh - 111px);}}
+  </style>
+</head>
+<body>
+  <nav class="shell-nav" aria-label="보고서 이동">
+    <span class="shell-nav__label">{{ title }}</span>
+    <div class="shell-nav__buttons" role="tablist" aria-label="계정 선택">
+      {%- for it in items %}
+      <button type="button" role="tab" aria-selected="{{ 'true' if loop.first else 'false' }}" aria-controls="report-frame" data-report="{{ it.id }}">{{ loop.index }}. {{ it.label }}</button>
+      {%- endfor %}
+    </div>
+    <button type="button" class="shell-save" data-shell-save title="각 탭에서 편집한 내용을 포함해 통합 보고서를 새 파일로 저장합니다">💾 통합본 저장 (수정됨)</button>
+  </nav>
+  <iframe id="report-frame" title="{{ items[0].label }}" sandbox="allow-scripts"></iframe>
+  <script id="embedded-reports" type="application/json">{{ data_json | safe }}</script>
+  <script>
+    (function(){
+      var reports = JSON.parse(document.getElementById('embedded-reports').textContent);
+      var frame = document.getElementById('report-frame');
+      var buttons = Array.prototype.slice.call(document.querySelectorAll('[data-report]'));
+      var saveBtn = document.querySelector('[data-shell-save]');
+      var current = null, dirty = false;
+      function openReport(id){
+        var report = reports[id];
+        if(!report) return;
+        current = id;
+        frame.srcdoc = report.html;
+        frame.title = report.label;
+        buttons.forEach(function(button){button.setAttribute('aria-selected', String(button.dataset.report === id));});
+      }
+      buttons.forEach(function(button){button.addEventListener('click', function(){openReport(button.dataset.report);});});
+
+      // ---- 편집 연동: 각 보고서에 '통합본 안'임을 알리고, 수정본을 받아 보관 ----
+      frame.addEventListener('load', function(){
+        frame.contentWindow.postMessage({type:'coupang-shell:hello'}, '*');
+      });
+      window.addEventListener('message', function(e){
+        if (e.source !== frame.contentWindow || !e.data || e.data.type !== 'coupang-report:update') return;
+        if (typeof e.data.html !== 'string' || !reports[current]) return;
+        reports[current].html = e.data.html;
+        dirty = true;
+        saveBtn.classList.add('show');
+      });
+      function safeJson(obj){
+        return JSON.stringify(obj).replace(/</g,'\\u003C').replace(/>/g,'\\u003E').replace(/&/g,'\\u0026');
+      }
+      function saveMerged(){
+        var root = document.documentElement.cloneNode(true);
+        root.querySelector('#embedded-reports').textContent = safeJson(reports);
+        var f = root.querySelector('#report-frame');
+        f.removeAttribute('srcdoc');
+        var s = root.querySelector('[data-shell-save]');
+        s.classList.remove('show');
+        var html = '<!doctype html>\n' + root.outerHTML;
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([html], {type:'text/html;charset=utf-8'}));
+        a.download = (document.title || '통합 보고서').replace(/[\\/:*?"<>|]/g, '_') + '_수정본.html';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function(){ URL.revokeObjectURL(a.href); }, 1000);
+        dirty = false;
+        saveBtn.classList.remove('show');
+      }
+      saveBtn.addEventListener('click', saveMerged);
+      window.addEventListener('beforeunload', function(e){ if (dirty){ e.preventDefault(); e.returnValue = ''; } });
+      window.__shellEditor = {save: saveMerged, reports: reports};
+
+      openReport('{{ items[0].id }}');
+    }());
+  </script>
+</body>
+</html>
