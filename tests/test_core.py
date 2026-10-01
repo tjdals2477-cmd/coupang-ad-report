@@ -84,8 +84,16 @@ class DataTests(unittest.TestCase):
         self.assertEqual(clean_product_name(n), "안트 LED 일자등 50W · 5개 · 주광색")
 
     def test_guess_meta(self):
-        self.assertEqual(guess_meta("안트_9월 광고보고서.xlsx"), {"account": "안트", "month": 9})
+        m = guess_meta("안트_9월 광고보고서.xlsx")
+        self.assertEqual((m["account"], m["month"], m["range"]), ("안트", 9, None))
         self.assertEqual(guess_meta("report.xlsx")["month"], None)
+
+    def test_guess_meta_date_range(self):
+        for name, label, days in [("9월16~9월22일.xlsx", "9/16~22", 7), ("9월 23~9월 29.xlsx", "9/23~29", 7),
+                                  ("고네오_9.1~9.14 광고.xlsx", "9/1~14", 14), ("8월25일-9월7일.xlsx", "8/25~9/7", 14),
+                                  ("12월29~1월4일.xlsx", "12/29~1/4", 7)]:
+            m = guess_meta(name)
+            self.assertEqual((m["label"], m["days"]), (label, days), name)
 
 
 class AnalysisTests(unittest.TestCase):
@@ -150,6 +158,7 @@ class AnalysisTests(unittest.TestCase):
         t = build_context(PREV, CUR, Settings(account="t", prev_total_sales=1_000_000,
                                               cur_total_sales=2_000_000))["trend"]
         self.assertEqual(t["granularity"], "month")
+        self.assertEqual(t["unit"], "기간 합계")
         self.assertEqual(t["n"], 2)
         self.assertEqual([sr["key"] for sr in t["series"]], ["sales", "revenue", "cost"])
         self.assertEqual(t["series"][0]["values"], [1_000_000, 2_000_000])

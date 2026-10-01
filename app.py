@@ -124,15 +124,20 @@ def make_tab():
         return
     prev_span, cur_span = date_span(prev_df), date_span(cur_df)
 
-    def _span_days(span, month):
-        return (span[1] - span[0]).days + 1 if span else _days_in(month)
+    def _span_days(span, meta):
+        if span:  # 파일 안 날짜가 가장 정확
+            return (span[1] - span[0]).days + 1
+        return meta["days"] or _days_in(meta["month"])  # 파일명 기간(예: 9월16~9월22일) → 월 일수
+
+    def _label(meta, fallback):
+        return meta["label"] or (f"{meta['month']}월" if meta["month"] else fallback)
 
     b1, b2, b3, b4 = st.columns(4)
-    prev_label = b1.text_input("직전월 표기", value=f"{pm['month']}월" if pm["month"] else "직전월")
-    prev_days = b2.number_input("직전월 집계 일수", min_value=0, max_value=366, value=_span_days(prev_span, pm["month"]),
+    prev_label = b1.text_input("직전월 표기", value=_label(pm, "직전월"))
+    prev_days = b2.number_input("직전월 집계 일수", min_value=0, max_value=366, value=_span_days(prev_span, pm),
                                 help="일평균 계산용. 일별 파일이면 날짜에서 자동 계산됩니다. 0이면 일평균을 표시하지 않습니다.")
-    cur_label = b3.text_input("금월 표기", value=f"{cm['month']}월" if cm["month"] else "금월")
-    cur_days = b4.number_input("금월 집계 일수", min_value=0, max_value=366, value=_span_days(cur_span, cm["month"]),
+    cur_label = b3.text_input("금월 표기", value=_label(cm, "금월"))
+    cur_days = b4.number_input("금월 집계 일수", min_value=0, max_value=366, value=_span_days(cur_span, cm),
                                help="월 중간 보고(예: 1~14일)라면 실제 일수로 바꿔주세요.")
 
     if prev_label.strip() == cur_label.strip():
@@ -173,9 +178,10 @@ def make_tab():
         prev_sales, cur_sales = totals["prev"], totals["cur"]
         st.caption("핵심 지표의 총매출은 구간별 입력값의 합계로 계산됩니다.")
     else:
-        if prev_span or cur_span:
-            st.info("한쪽 파일에만 날짜가 있어 월 합계 기준으로 비교합니다. 두 파일 모두 쿠팡 Wing에서 '일별'로 내려받으면 "
-                    "주/일 단위 추이 차트가 그려집니다.")
+        missing = [lbl for lbl, sp in ((prev_label, prev_span), (cur_label, cur_span)) if not sp]
+        st.info(f"📅 {', '.join(missing)} 파일에 날짜 칸이 없어(기간 합계 파일) 추이 차트를 **기간 합계 2점**으로 그립니다. "
+                "꺾은선으로 보려면 쿠팡 Wing 광고 보고서를 **일별**로 내려받아 두 파일 모두 다시 올려주세요. "
+                "(월 파일 → 7일 단위, 7·14일 파일 → 1일 단위)")
         s1, s2 = st.columns(2)
         prev_sales = s1.number_input(f"{prev_label} 총매출(원)", min_value=0, step=100000, value=0,
                                      help="광고 보고서 엑셀에는 총매출(자연매출 포함)이 없어 직접 입력합니다. 0이면 '입력 필요'로 표시됩니다.")

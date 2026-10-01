@@ -172,10 +172,26 @@ def product_table(df: pd.DataFrame, campaign_id: str) -> pd.DataFrame:
     return g
 
 
+_RANGE_RE = re.compile(
+    r"(\d{1,2})\s*[월./]\s*(\d{1,2})\s*일?\s*[~\-–]\s*(?:(\d{1,2})\s*[월./]\s*)?(\d{1,2})\s*일?")
+
+
 def guess_meta(filename: str) -> dict:
-    """'안트_9월 광고보고서.xlsx' → {'account': '안트', 'month': 9}."""
+    """'안트_9월 광고보고서.xlsx' → {'account': '안트', 'month': 9, 'range': None}
+    '9월16~9월22일.xlsx' → {'month': 9, 'range': ((9, 16), (9, 22)), 'label': '9/16~22', 'days': 7}"""
     stem = re.sub(r"\.(xlsx|xls|csv)$", "", filename, flags=re.I)
+    account = re.split(r"[_\s]", stem, maxsplit=1)[0] if "_" in stem else ""
+    r = _RANGE_RE.search(stem)
+    if r:
+        m1, d1 = int(r.group(1)), int(r.group(2))
+        m2, d2 = int(r.group(3) or m1), int(r.group(4))
+        if 1 <= m1 <= 12 and 1 <= m2 <= 12 and 1 <= d1 <= 31 and 1 <= d2 <= 31:
+            year = pd.Timestamp.today().year
+            start = pd.Timestamp(year, m1, d1)
+            end = pd.Timestamp(year + (1 if m2 < m1 else 0), m2, d2)
+            label = f"{m1}/{d1}~{d2}" if m1 == m2 else f"{m1}/{d1}~{m2}/{d2}"
+            return {"account": account, "month": m1, "range": ((m1, d1), (m2, d2)),
+                    "label": label, "days": (end - start).days + 1}
     m = re.search(r"(\d{1,2})\s*월", stem)
     month = int(m.group(1)) if m and 1 <= int(m.group(1)) <= 12 else None
-    account = re.split(r"[_\s]", stem, maxsplit=1)[0] if "_" in stem else ""
-    return {"account": account, "month": month}
+    return {"account": account, "month": month, "range": None, "label": None, "days": None}

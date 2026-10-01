@@ -279,7 +279,7 @@ def trend_chart(prev_df: pd.DataFrame, cur_df: pd.DataFrame, p: dict, c: dict, s
                 dividers.append((xs[idx[0] - 1] + xs[idx[0]]) / 2)
     ticks = [{"y": y(v), "label": short_won(v) if v else "0"}
              for v in [step * i for i in range(int(round(ymax / step)) + 1)]]
-    unit = {"day": "1일 단위", "week": "7일 단위", "month": "월 합계"}[data["granularity"]]
+    unit = {"day": "1일 단위", "week": "7일 단위", "month": "기간 합계"}[data["granularity"]]
     tooltip = []
     for i, (gi, pt) in enumerate(flat):
         title = f"{groups[gi]['label']} · {cols[i]['label']}" if data["granularity"] != "month" else pt["label"]
