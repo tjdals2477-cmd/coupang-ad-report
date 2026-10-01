@@ -70,9 +70,8 @@ def render_report(ctx: dict) -> str:
     tpl = _env.get_template("report.html.j2")
     trend = ctx.get("trend")
     trend_json = safe_json({
-        "periods": list(trend["x_labels"]),
-        "series": [{"label": sr["label"], "color": sr["color"], "values": [sr["prev_txt"], sr["cur_txt"]],
-                    "delta": sr["delta"]} for sr in trend["series"]],
+        "series": [{"label": sr["label"], "color": sr["color"]} for sr in trend["series"]],
+        "cols": trend["tooltip"],
     }) if trend else ""
     return tpl.render(**ctx, data_json=safe_json(report_data(ctx)), trend_json=trend_json)
 

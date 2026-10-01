@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from .data import campaign_table, product_table, summarize
+from .data import campaign_table, date_span, product_table, summarize
 
 
 @dataclass
@@ -27,6 +27,8 @@ class Settings:
     written: str = ""
     # {캠페인 ID: {"target_roas": float|None, "daily_budget": float|None}}
     targets: dict = field(default_factory=dict)
+    # 일별 데이터일 때 구간별 총매출 {구간 key: 금액} (key는 make_buckets의 key)
+    bucket_sales: dict = field(default_factory=dict)
 
 
 # ---------- 공통 포맷/증감 ----------
@@ -148,49 +150,146 @@ def _spread(ys: list[float], gap: float, lo: float, hi: float) -> list[float]:
     return [max(lo, y) for y in out]
 
 
-def trend_chart(p: dict, c: dict, s: Settings) -> dict | None:
-    """직전월→금월 선 차트. 총매출·광고전환매출·집행 광고비 중 하나라도 비어 있으면 None."""
-    values = {
-        "sales": (s.prev_total_sales, s.cur_total_sales),
-        "revenue": (p["revenue"], c["revenue"]),
-        "cost": (p["cost"], c["cost"]),
-    }
-    if any(not v or v <= 0 for pair in values.values() for v in pair):
-        return None
+DAILY_MAX_DAYS = 14  # 이 기간 이하이면 1일 단위, 초과하면 7일 단위
 
-    W, H, L, R, T, B = 640, 280, 64, 28, 22, 40
+
+def choose_granularity(prev_df: pd.DataFrame, cur_df: pd.DataFrame) -> str | None:
+    """두 보고서 모두 날짜가 있을 때만 'day' 또는 'week'. 둘 다 같은 단위를 써야 크기 비교가 맞다."""
+    spans = [date_span(prev_df), date_span(cur_df)]
+    if not all(spans):
+        return None
+    longest = max((e - st).days + 1 for st, e in spans)
+    return "day" if longest <= DAILY_MAX_DAYS else "week"
+
+
+def make_buckets(df: pd.DataFrame, side: str, granularity: str) -> list[dict]:
+    """보고서를 1일/7일 구간으로 나눠 광고비·광고전환매출 합계. 데이터가 없는 날도 0으로 채운다."""
+    start, end = date_span(df)
+    daily = df.dropna(subset=["date"]).groupby("date")[["cost", "revenue"]].sum()
+    daily = daily.reindex(pd.date_range(start, end, freq="D"), fill_value=0)
+    size = 1 if granularity == "day" else 7
+    buckets = []
+    for i in range(0, len(daily), size):
+        chunk = daily.iloc[i:i + size]
+        b0, b1 = chunk.index[0], chunk.index[-1]
+        label = f"{b0.month}/{b0.day}" if b0 == b1 else (
+            f"{b0.month}/{b0.day}~{b1.day}" if b0.month == b1.month else f"{b0.month}/{b0.day}~{b1.month}/{b1.day}")
+        buckets.append({"key": f"{side}:{b0:%Y-%m-%d}", "start": b0, "end": b1, "label": label,
+                        "days": len(chunk), "cost": float(chunk["cost"].sum()),
+                        "revenue": float(chunk["revenue"].sum())})
+    return buckets
+
+
+SERIES_SPEC = [("sales", "총매출", "#5B4FE5", "circle"),
+               ("revenue", "광고 전환 매출", "#14b8a6", "square"),
+               ("cost", "집행 광고비", "#FF7A45", "diamond")]
+
+
+def trend_points(prev_df: pd.DataFrame, cur_df: pd.DataFrame, p: dict, c: dict, s: Settings) -> dict | None:
+    """차트에 찍을 점 목록. 총매출·광고전환매출·광고비 중 하나라도 비면 None."""
+    gran = choose_granularity(prev_df, cur_df)
+    groups = []
+    if gran:
+        for side, df, label in (("prev", prev_df, s.prev_label), ("cur", cur_df, s.cur_label)):
+            pts = make_buckets(df, side, gran)
+            for b in pts:
+                b["sales"] = s.bucket_sales.get(b["key"])
+            groups.append({"label": label, "points": pts})
+    else:  # 월 합계 파일: 직전월·금월 2점
+        groups = [{"label": s.prev_label, "points": [{"key": "prev", "label": s.prev_label, "sales": s.prev_total_sales,
+                                                       "revenue": p["revenue"], "cost": p["cost"]}]},
+                  {"label": s.cur_label, "points": [{"key": "cur", "label": s.cur_label, "sales": s.cur_total_sales,
+                                                      "revenue": c["revenue"], "cost": c["cost"]}]}]
+    for g in groups:
+        for pt in g["points"]:
+            if any(pt.get(k) in (None, "") or float(pt[k]) <= 0 for k in ("sales", "revenue", "cost")):
+                return None
+    return {"granularity": gran or "month", "groups": groups}
+
+
+def trend_chart(prev_df: pd.DataFrame, cur_df: pd.DataFrame, p: dict, c: dict, s: Settings) -> dict | None:
+    data = trend_points(prev_df, cur_df, p, c, s)
+    if not data:
+        return None
+    groups = data["groups"]
+    flat = [(gi, pt) for gi, g in enumerate(groups) for pt in g["points"]]
+    n = len(flat)
+
+    W, H, L, R, T, B = 760, 300, 64, 150, 34, 44
     pw, ph = W - L - R, H - T - B
-    xs = (L + pw * 0.16, L + pw * 0.68)  # 오른쪽은 이름+값 직접 라벨 공간
-    top = max(v for pair in values.values() for v in pair)
+    # x: 구간 사이 간격 1칸, 직전월/금월 사이에는 1칸 더 띄워 구분
+    slots = [i + gi for i, (gi, _) in enumerate(flat)]
+    span = max(slots[-1], 1)
+    pad = pw * (0.18 if n == 2 else 0.04)
+    xs = [L + pad + (pw - 2 * pad) * (sl / span) for sl in slots] if n > 1 else [L + pw / 2]
+    top = max(float(pt[k]) for _, pt in flat for k in ("sales", "revenue", "cost"))
     step = _nice_step(top * 1.1 / 4)
     ymax = step * math.ceil(top * 1.1 / step)
 
     def y(v):
         return T + ph * (1 - v / ymax)
 
-    spec = [("sales", "총매출", "#5B4FE5", "circle"),
-            ("revenue", "광고 전환 매출", "#14b8a6", "square"),
-            ("cost", "집행 광고비", "#FF7A45", "diamond")]
     series = []
-    for key, label, color, shape in spec:
-        pv, cv = values[key]
-        series.append({
-            "key": key, "label": label, "color": color, "shape": shape,
-            "prev": pv, "cur": cv, "prev_txt": won(pv), "cur_txt": won(cv),
-            "prev_short": short_won(pv), "cur_short": short_won(cv),
-            "delta": delta(cv, pv),
-            "pts": [(xs[0], y(pv)), (xs[1], y(cv))],
-        })
-    # 직접 라벨 위치 (겹침 방지)
-    for side in (0, 1):
-        ly = _spread([sr["pts"][side][1] + 4 for sr in series], 16, T + 8, T + ph)
-        for sr, yy in zip(series, ly):
-            sr.setdefault("label_y", [0, 0])[side] = yy
+    for key, label, color, shape in SERIES_SPEC:
+        vals = [float(pt[key]) for _, pt in flat]
+        pts = [(x, y(v)) for x, v in zip(xs, vals)]
+        # 직전월과 금월 사이는 선을 끊는다 (기간이 이어지지 않음)
+        segs = []
+        for gi in range(len(groups)):
+            idx = [i for i, (g, _) in enumerate(flat) if g == gi]
+            if len(idx) > 1:
+                segs.append(" ".join(f"{pts[i][0]:.1f},{pts[i][1]:.1f}" for i in idx))
+        series.append({"key": key, "label": label, "color": color, "shape": shape, "values": vals,
+                       "pts": pts, "segs": segs, "end_txt": short_won(vals[-1]),
+                       "connect": n == 2})
+    # 끝점 직접 라벨 (겹침 방지)
+    ly = _spread([sr["pts"][-1][1] + 4 for sr in series], 16, T + 8, T + ph)
+    for sr, yy in zip(series, ly):
+        sr["end_label_y"] = yy
+    if n == 2:  # 월 2점: 시작점 값도 표시
+        ly0 = _spread([sr["pts"][0][1] + 4 for sr in series], 16, T + 8, T + ph)
+        for sr, yy in zip(series, ly0):
+            sr["start_label_y"] = yy
+            sr["start_txt"] = short_won(sr["values"][0])
+
+    every = 1 if n <= 16 else math.ceil(n / 16)  # x축 라벨 솎기 (기간별로 처음·끝은 항상 표시)
+    shown = set()
+    for gi in range(len(groups)):
+        idx = [i for i, (g, _) in enumerate(flat) if g == gi]
+        pick = idx[::every]
+        if pick[-1] != idx[-1]:
+            if idx[-1] - pick[-1] < every:  # 끝 라벨과 너무 가까우면 앞 라벨을 뺀다
+                pick = pick[:-1]
+            pick.append(idx[-1])
+        shown.update(pick)
+    cols = []
+    for i, (gi, pt) in enumerate(flat):
+        half = (xs[1] - xs[0]) / 2 if n > 1 else 40
+        partial = data["granularity"] == "week" and pt.get("days", 7) < 7  # 7일 미만 구간 (월말 등)
+        cols.append({"x": xs[i], "label": pt["label"] + (f" ({pt['days']}일)" if partial else ""), "partial": partial,
+                     "label_main": pt["label"], "label_sub": f"({pt['days']}일)" if partial else "",
+                     "show": i in shown,
+                     "hit_x": xs[i] - min(half, 60), "hit_w": min(half, 60) * 2, "group": groups[gi]["label"]})
+    dividers, headers = [], []
+    if data["granularity"] != "month":
+        for gi, g in enumerate(groups):
+            idx = [i for i, (g2, _) in enumerate(flat) if g2 == gi]
+            headers.append({"x": (xs[idx[0]] + xs[idx[-1]]) / 2, "label": g["label"]})
+            if gi > 0:
+                dividers.append((xs[idx[0] - 1] + xs[idx[0]]) / 2)
     ticks = [{"y": y(v), "label": short_won(v) if v else "0"}
              for v in [step * i for i in range(int(round(ymax / step)) + 1)]]
-    return {"w": W, "h": H, "left": L, "right": W - R, "top": T, "bottom": T + ph,
-            "xs": xs, "series": series, "ticks": ticks,
-            "x_labels": (s.prev_label, s.cur_label)}
+    unit = {"day": "1일 단위", "week": "7일 단위", "month": "월 합계"}[data["granularity"]]
+    tooltip = []
+    for i, (gi, pt) in enumerate(flat):
+        title = f"{groups[gi]['label']} · {cols[i]['label']}" if data["granularity"] != "month" else pt["label"]
+        tooltip.append({"title": title, "values": [won(sr["values"][i]) for sr in series],
+                        "deltas": [delta(sr["values"][i], sr["values"][i - 1]) if i > 0 and flat[i - 1][0] == gi
+                                   or (n == 2 and i == 1) else None for sr in series]})
+    return {"w": W, "h": H, "left": L, "right": W - R, "top": T, "bottom": T + ph, "n": n,
+            "series": series, "cols": cols, "ticks": ticks, "dividers": dividers, "headers": headers,
+            "granularity": data["granularity"], "unit": unit, "tooltip": tooltip,
+            "has_partial": any(c["partial"] for c in cols)}
 
 
 # ---------- 섹션 ② 최대 이슈 ----------
@@ -364,7 +463,7 @@ def build_context(prev_df: pd.DataFrame, cur_df: pd.DataFrame, s: Settings) -> d
         "s": s,
         "prev": p, "cur": c,
         "kpis": kpi_cards(p, c, s),
-        "trend": trend_chart(p, c, s),
+        "trend": trend_chart(prev_df, cur_df, p, c, s),
         "headline": headline(issue, c, cur_c),
         "issue": issue,
         "best": best,

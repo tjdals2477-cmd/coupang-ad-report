@@ -149,11 +149,12 @@ class AnalysisTests(unittest.TestCase):
         self.assertIsNone(build_context(PREV, CUR, Settings(account="t", prev_total_sales=1_000_000))["trend"])
         t = build_context(PREV, CUR, Settings(account="t", prev_total_sales=1_000_000,
                                               cur_total_sales=2_000_000))["trend"]
+        self.assertEqual(t["granularity"], "month")
+        self.assertEqual(t["n"], 2)
         self.assertEqual([sr["key"] for sr in t["series"]], ["sales", "revenue", "cost"])
-        self.assertEqual(t["series"][0]["cur"], 2_000_000)
-        for side in (0, 1):  # 직접 라벨이 서로 겹치지 않음
-            ys = sorted(sr["label_y"][side] for sr in t["series"])
-            self.assertTrue(all(b - a >= 15.9 for a, b in zip(ys, ys[1:])), ys)
+        self.assertEqual(t["series"][0]["values"], [1_000_000, 2_000_000])
+        ys = sorted(sr["end_label_y"] for sr in t["series"])  # 끝점 라벨이 서로 겹치지 않음
+        self.assertTrue(all(b - a >= 15.9 for a, b in zip(ys, ys[1:])), ys)
 
     def test_short_won(self):
         from core.analysis import short_won
@@ -240,6 +241,102 @@ class RenderTests(unittest.TestCase):
     def test_merge_requires_reports(self):
         with self.assertRaises(ValueError):
             merge_reports([])
+
+
+def make_daily_df(start, days, seed=1):
+    """가상 일별 보고서 (테스트용): 하루 1행, 광고비·매출이 날마다 다름."""
+    import random
+    rnd = random.Random(seed)
+    rows = []
+    for i in range(days):
+        d = pd.Timestamp(start) + pd.Timedelta(days=i)
+        cost = rnd.randint(50, 150) * 1000
+        rows.append([1, "AI스마트광고", "상품A", 11, 1000, 50, cost, 3, cost * 5, 3, cost * 5, d.strftime("%Y%m%d")])
+    buf = io.BytesIO()
+    pd.DataFrame(rows, columns=COLS + ["날짜"]).to_excel(buf, index=False)
+    buf.seek(0)
+    return load_report(buf, "daily.xlsx")
+
+
+def fake_sales(df_prev, df_cur, gran):
+    """가상 총매출: 구간마다 광고 전환 매출의 1.4배."""
+    from core.analysis import make_buckets
+    out = {}
+    for side, df in (("prev", df_prev), ("cur", df_cur)):
+        for b in make_buckets(df, side, gran):
+            out[b["key"]] = round(b["revenue"] * 1.4)
+    return out
+
+
+class DailyTrendTests(unittest.TestCase):
+    def test_dates_detected_from_yyyymmdd(self):
+        from core.data import date_span
+        df = make_daily_df("2026-08-01", 31)
+        self.assertEqual(date_span(df), (pd.Timestamp("2026-08-01"), pd.Timestamp("2026-08-31")))
+        self.assertIsNone(date_span(PREV))  # 월 합계 파일은 날짜 없음
+
+    def test_month_files_use_7_day_buckets(self):
+        from core.analysis import choose_granularity, make_buckets
+        prev, cur = make_daily_df("2026-08-01", 31), make_daily_df("2026-09-01", 30, seed=2)
+        self.assertEqual(choose_granularity(prev, cur), "week")
+        b = make_buckets(prev, "prev", "week")
+        self.assertEqual([x["label"] for x in b], ["8/1~7", "8/8~14", "8/15~21", "8/22~28", "8/29~31"])
+        self.assertEqual(sum(x["cost"] for x in b), summarize(prev)["cost"])  # 구간 합 = 월 합계
+
+    def test_7_and_14_day_files_use_daily_points(self):
+        from core.analysis import choose_granularity
+        self.assertEqual(choose_granularity(make_daily_df("2026-09-01", 7), make_daily_df("2026-09-08", 7)), "day")
+        self.assertEqual(choose_granularity(make_daily_df("2026-08-18", 14), make_daily_df("2026-09-01", 14)), "day")
+        # 한쪽이라도 14일을 넘으면 둘 다 7일 단위 (같은 단위로 비교)
+        self.assertEqual(choose_granularity(make_daily_df("2026-08-01", 31), make_daily_df("2026-09-01", 14)), "week")
+        # 한쪽에 날짜가 없으면 월 합계 2점
+        self.assertIsNone(choose_granularity(PREV, make_daily_df("2026-09-01", 14)))
+
+    def test_missing_day_filled_with_zero(self):
+        from core.analysis import make_buckets
+        df = make_daily_df("2026-09-01", 7)
+        df = df[df["date"] != pd.Timestamp("2026-09-03")]
+        b = make_buckets(df, "cur", "day")
+        self.assertEqual(len(b), 7)
+        self.assertEqual(b[2]["cost"], 0)
+
+    def test_daily_chart_with_fake_sales(self):
+        prev, cur = make_daily_df("2026-09-01", 7), make_daily_df("2026-09-08", 7, seed=3)
+        s = Settings(account="t", prev_label="1주차", cur_label="2주차",
+                     bucket_sales=fake_sales(prev, cur, "day"))
+        t = build_context(prev, cur, s)["trend"]
+        self.assertEqual((t["granularity"], t["n"]), ("day", 14))
+        self.assertEqual(len(t["dividers"]), 1)                     # 주차 사이 구분선
+        self.assertEqual([h["label"] for h in t["headers"]], ["1주차", "2주차"])
+        self.assertEqual(len(t["series"][0]["segs"]), 2)             # 기간 사이는 선을 끊음
+        html = render_report(build_context(prev, cur, s))
+        self.assertEqual(html.count('class="hit"'), 14)
+
+    def test_weekly_chart_and_blank_cell_blocks_chart(self):
+        prev, cur = make_daily_df("2026-08-01", 31), make_daily_df("2026-09-01", 30, seed=2)
+        sales = fake_sales(prev, cur, "week")
+        t = build_context(prev, cur, Settings(account="t", bucket_sales=sales))["trend"]
+        self.assertEqual((t["granularity"], t["n"]), ("week", 10))
+        self.assertEqual(t["cols"][4]["label"], "8/29~31 (3일)")      # 7일 미만 구간 표시
+        self.assertTrue(t["cols"][4]["partial"] and t["has_partial"])
+        self.assertFalse(t["cols"][0]["partial"])
+        sales.pop(next(iter(sales)))                                  # 한 칸 비움
+        self.assertIsNone(build_context(prev, cur, Settings(account="t", bucket_sales=sales))["trend"])
+
+    def test_x_labels_thinned_without_collision(self):
+        prev, cur = make_daily_df("2026-09-01", 14), make_daily_df("2026-09-15", 14, seed=3)
+        t = build_context(prev, cur, Settings(account="t", bucket_sales=fake_sales(prev, cur, "day")))["trend"]
+        shown = [i for i, c in enumerate(t["cols"]) if c["show"]]
+        self.assertIn(0, shown); self.assertIn(13, shown); self.assertIn(14, shown); self.assertIn(27, shown)
+        same_group_gaps = [b - a for a, b in zip(shown, shown[1:]) if not (a <= 13 < b)]
+        self.assertTrue(all(g >= 2 for g in same_group_gaps), shown)
+
+    def test_tooltip_delta_vs_previous_bucket(self):
+        prev, cur = make_daily_df("2026-09-01", 7), make_daily_df("2026-09-08", 7, seed=3)
+        t = build_context(prev, cur, Settings(account="t", bucket_sales=fake_sales(prev, cur, "day")))["trend"]
+        self.assertIsNone(t["tooltip"][0]["deltas"][0])   # 첫 구간
+        self.assertIsNotNone(t["tooltip"][1]["deltas"][0])
+        self.assertIsNone(t["tooltip"][7]["deltas"][0])   # 금월 첫 구간은 직전월과 이어지지 않음
 
 
 # 실데이터 회귀 테스트 (로컬 전용): 계정 수치는 저장소에 올리지 않도록 별도 파일에 둔다.

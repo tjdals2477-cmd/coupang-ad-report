@@ -2,10 +2,12 @@
 {%- macro chg(d) -%}
   {%- if d -%}<div class="chg {{ d.dir }}">{{ d.text }}</div>{%- else -%}<div class="chg"></div>{%- endif -%}
 {%- endmacro -%}
-{%- macro marker(shape, x, y, color, r) -%}
-  {%- if shape == 'square' -%}<rect x="{{ '%.1f'|format(x - r) }}" y="{{ '%.1f'|format(y - r) }}" width="{{ r * 2 }}" height="{{ r * 2 }}" rx="1.5" fill="{{ color }}" stroke="#fff" stroke-width="2"/>
-  {%- elif shape == 'diamond' -%}<path d="M{{ '%.1f'|format(x) }} {{ '%.1f'|format(y - r * 1.3) }}L{{ '%.1f'|format(x + r * 1.3) }} {{ '%.1f'|format(y) }}L{{ '%.1f'|format(x) }} {{ '%.1f'|format(y + r * 1.3) }}L{{ '%.1f'|format(x - r * 1.3) }} {{ '%.1f'|format(y) }}Z" fill="{{ color }}" stroke="#fff" stroke-width="2"/>
-  {%- else -%}<circle cx="{{ '%.1f'|format(x) }}" cy="{{ '%.1f'|format(y) }}" r="{{ r }}" fill="{{ color }}" stroke="#fff" stroke-width="2"/>
+{%- macro marker(shape, x, y, color, r, hollow=false) -%}
+  {%- set color_fill = '#fff' if hollow else color -%}
+  {%- set stroke = color if hollow else '#fff' -%}
+  {%- if shape == 'square' -%}<rect x="{{ '%.1f'|format(x - r) }}" y="{{ '%.1f'|format(y - r) }}" width="{{ r * 2 }}" height="{{ r * 2 }}" rx="1.5" fill="{{ color_fill }}" stroke="{{ stroke }}" stroke-width="2"/>
+  {%- elif shape == 'diamond' -%}<path d="M{{ '%.1f'|format(x) }} {{ '%.1f'|format(y - r * 1.3) }}L{{ '%.1f'|format(x + r * 1.3) }} {{ '%.1f'|format(y) }}L{{ '%.1f'|format(x) }} {{ '%.1f'|format(y + r * 1.3) }}L{{ '%.1f'|format(x - r * 1.3) }} {{ '%.1f'|format(y) }}Z" fill="{{ color_fill }}" stroke="{{ stroke }}" stroke-width="2"/>
+  {%- else -%}<circle cx="{{ '%.1f'|format(x) }}" cy="{{ '%.1f'|format(y) }}" r="{{ r }}" fill="{{ color_fill }}" stroke="{{ stroke }}" stroke-width="2"/>
   {%- endif -%}
 {%- endmacro -%}
 {%- macro comp_card(side, badge, name, desc, rows) -%}
@@ -67,7 +69,7 @@
     {%- set t = trend %}
     <div class="trend-card" data-trend>
       <div class="trend-head">
-        <p class="trend-title">총매출 · 광고 전환 매출 · 집행 광고비 추이</p>
+        <p class="trend-title">총매출 · 광고 전환 매출 · 집행 광고비 추이 <span class="trend-unit">{{ t.unit }}</span></p>
         <div class="trend-legend">
           {%- for sr in t.series %}
           <span><svg width="22" height="10" aria-hidden="true"><line x1="1" y1="5" x2="21" y2="5" stroke="{{ sr.color }}" stroke-width="2"/>{{ marker(sr.shape, 11, 5, sr.color, 3.5) }}</svg>{{ sr.label }}</span>
@@ -75,28 +77,44 @@
         </div>
       </div>
       <div class="trend-plot">
-        <svg viewBox="0 0 {{ t.w }} {{ t.h }}" role="img" aria-label="{{ s.prev_label }} 대비 {{ s.cur_label }} 총매출, 광고 전환 매출, 집행 광고비 변화">
+        <svg viewBox="0 0 {{ t.w }} {{ t.h }}" role="img" aria-label="{{ s.prev_label }}·{{ s.cur_label }} 총매출, 광고 전환 매출, 집행 광고비 추이 ({{ t.unit }})">
           {%- for tk in t.ticks %}
           <line class="tg" x1="{{ t.left }}" x2="{{ t.right }}" y1="{{ '%.1f'|format(tk.y) }}" y2="{{ '%.1f'|format(tk.y) }}"/>
           <text class="tl" x="{{ t.left - 10 }}" y="{{ '%.1f'|format(tk.y + 4) }}" text-anchor="end">{{ tk.label }}</text>
           {%- endfor %}
-          {%- for x in t.xs %}
-          <text class="tx" x="{{ '%.1f'|format(x) }}" y="{{ t.bottom + 24 }}" text-anchor="middle">{{ t.x_labels[loop.index0] }}</text>
+          {%- for dx in t.dividers %}
+          <line class="tdiv" x1="{{ '%.1f'|format(dx) }}" x2="{{ '%.1f'|format(dx) }}" y1="{{ t.top - 18 }}" y2="{{ t.bottom }}"/>
+          {%- endfor %}
+          {%- for hd in t.headers %}
+          <text class="th" x="{{ '%.1f'|format(hd.x) }}" y="{{ t.top - 16 }}" text-anchor="middle">{{ hd.label }}</text>
+          {%- endfor %}
+          {%- for col in t.cols if col.show %}
+          <text class="tx{% if t.n > 2 %} sm{% endif %}" x="{{ '%.1f'|format(col.x) }}" y="{{ t.bottom + 20 }}" text-anchor="middle">{{ col.label_main }}{% if col.label_sub %}<tspan x="{{ '%.1f'|format(col.x) }}" dy="13">{{ col.label_sub }}</tspan>{% endif %}</text>
           {%- endfor %}
           {%- for sr in t.series %}
           <g>
+            {%- if sr.connect %}
             <line x1="{{ '%.1f'|format(sr.pts[0][0]) }}" y1="{{ '%.1f'|format(sr.pts[0][1]) }}" x2="{{ '%.1f'|format(sr.pts[1][0]) }}" y2="{{ '%.1f'|format(sr.pts[1][1]) }}" stroke="{{ sr.color }}" stroke-width="2" stroke-linecap="round"/>
-            {%- for pt in sr.pts %}{{ marker(sr.shape, pt[0], pt[1], sr.color, 5) }}{% endfor %}
-            <text class="dl" x="{{ '%.1f'|format(sr.pts[0][0] - 12) }}" y="{{ '%.1f'|format(sr.label_y[0]) }}" text-anchor="end">{{ sr.prev_short }}</text>
-            <text class="dl" x="{{ '%.1f'|format(sr.pts[1][0] + 12) }}" y="{{ '%.1f'|format(sr.label_y[1]) }}"><tspan class="dn">{{ sr.label }}</tspan> {{ sr.cur_short }}</text>
+            {%- endif %}
+            {%- for seg in sr.segs %}
+            <polyline points="{{ seg }}" fill="none" stroke="{{ sr.color }}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+            {%- endfor %}
+            {%- for pt in sr.pts %}{{ marker(sr.shape, pt[0], pt[1], sr.color, 5 if t.n <= 16 else 3.5, t.cols[loop.index0].partial) }}{% endfor %}
+            {%- if sr.start_txt %}
+            <text class="dl" x="{{ '%.1f'|format(sr.pts[0][0] - 12) }}" y="{{ '%.1f'|format(sr.start_label_y) }}" text-anchor="end">{{ sr.start_txt }}</text>
+            {%- endif %}
+            <text class="dl" x="{{ '%.1f'|format(sr.pts[-1][0] + 12) }}" y="{{ '%.1f'|format(sr.end_label_y) }}"><tspan class="dn">{{ sr.label }}</tspan> {{ sr.end_txt }}</text>
           </g>
           {%- endfor %}
-          {%- for x in t.xs %}
-          <rect class="hit" x="{{ '%.1f'|format(x - 60) }}" y="{{ t.top }}" width="120" height="{{ t.bottom - t.top }}" data-col="{{ loop.index0 }}"/>
+          {%- for col in t.cols %}
+          <rect class="hit" x="{{ '%.1f'|format(col.hit_x) }}" y="{{ t.top }}" width="{{ '%.1f'|format(col.hit_w) }}" height="{{ t.bottom - t.top }}" data-col="{{ loop.index0 }}"/>
           {%- endfor %}
         </svg>
         <div class="trend-tip" role="tooltip" hidden></div>
       </div>
+      {%- if t.has_partial %}
+      <p class="trend-note">○ 속이 빈 점은 7일 미만 구간(월말 등)이라 값이 작게 보일 수 있습니다.</p>
+      {%- endif %}
       <script type="application/json" class="trend-data">{{ trend_json | safe }}</script>
     </div>
     {%- endif %}
@@ -262,12 +280,13 @@
     var hits = card.querySelectorAll('.hit');
     function esc(s){ return String(s).replace(/[&<>"]/g, function(ch){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]; }); }
     function show(hit){
-      var col = parseInt(hit.dataset.col, 10);
+      var col = parseInt(hit.dataset.col, 10), c = data.cols[col];
       hits.forEach(function(h){ h.classList.toggle('on', h === hit); });
-      var html = '<b>' + esc(data.periods[col]) + '</b>';
-      data.series.forEach(function(sr){
-        var d = (col === 1 && sr.delta) ? ' <em class="' + (sr.delta.dir === 'up' ? 'd-up' : sr.delta.dir === 'down' ? 'd-down' : '') + '">' + esc(sr.delta.text) + '</em>' : '';
-        html += '<div class="row"><i style="background:' + sr.color + '"></i><span>' + esc(sr.label) + '</span><em>' + esc(sr.values[col]) + '</em>' + d + '</div>';
+      var html = '<b>' + esc(c.title) + '</b>';
+      data.series.forEach(function(sr, si){
+        var dd = c.deltas[si];
+        var d = dd ? ' <em class="' + (dd.dir === 'up' ? 'd-up' : dd.dir === 'down' ? 'd-down' : '') + '">' + esc(dd.text) + '</em>' : '';
+        html += '<div class="row"><i style="background:' + sr.color + '"></i><span>' + esc(sr.label) + '</span><em>' + esc(c.values[si]) + '</em>' + d + '</div>';
       });
       tip.innerHTML = html; tip.hidden = false;
       var pr = plot.getBoundingClientRect(), hr = hit.getBoundingClientRect();

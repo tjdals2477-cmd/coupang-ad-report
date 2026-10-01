@@ -75,7 +75,38 @@ def load_report(file, filename: str, window: str = "14일") -> pd.DataFrame:
     df["orders"] = df[w["orders"]]
     df["clicks"] = df["클릭수"]
     df["impressions"] = df["노출수"]
+    df["date"] = _detect_dates(df)
     return df
+
+
+DATE_COLS = ["날짜", "일자", "date", "Date"]
+
+
+def _parse_dates(s: pd.Series) -> pd.Series:
+    """20260901 / '2026-09-01' / '2026.09.01' / 엑셀 날짜 모두 처리."""
+    if pd.api.types.is_datetime64_any_dtype(s):
+        return s.dt.normalize()
+    text = s.astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+    compact = text.str.fullmatch(r"\d{8}")
+    out = pd.to_datetime(text.where(~compact), errors="coerce", format="mixed")
+    out = out.fillna(pd.to_datetime(text.where(compact), errors="coerce", format="%Y%m%d"))
+    return out.dt.normalize()
+
+
+def _detect_dates(df: pd.DataFrame) -> pd.Series:
+    """'일별'로 내려받은 보고서의 날짜 컬럼. 없거나 대부분 해석되지 않으면 NaT."""
+    for col in DATE_COLS:
+        if col in df.columns:
+            parsed = _parse_dates(df[col])
+            if len(parsed) and parsed.notna().mean() >= 0.9:
+                return parsed
+    return pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
+
+
+def date_span(df: pd.DataFrame) -> tuple[pd.Timestamp, pd.Timestamp] | None:
+    """보고서에 날짜가 있으면 (시작일, 종료일)."""
+    d = df["date"].dropna() if "date" in df.columns else pd.Series(dtype="datetime64[ns]")
+    return (d.min(), d.max()) if len(d) else None
 
 
 def _ratio(num, den, scale=100.0):

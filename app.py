@@ -15,8 +15,8 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
-from core.analysis import Settings, build_context
-from core.data import ReportFileError, campaign_table, guess_meta, load_report
+from core.analysis import Settings, build_context, choose_granularity, make_buckets
+from core.data import ReportFileError, campaign_table, date_span, guess_meta, load_report
 from core.render import extract_report_data, extract_title, merge_reports, render_report
 
 st.set_page_config(page_title="쿠팡 광고 보고서 생성기", page_icon="📊", layout="wide")
@@ -115,22 +115,71 @@ def make_tab():
     window = a3.radio("광고 전환 기준", ["14일", "1일"], horizontal=True,
                       help="쿠팡 기본 화면의 광고전환매출은 14일 기준입니다.")
 
+    # ---------------- 파일 로드 ----------------
+    try:
+        prev_df = _load(prev_file.getvalue(), prev_file.name, window)
+        cur_df = _load(cur_file.getvalue(), cur_file.name, window)
+    except ReportFileError as e:
+        st.error(str(e))
+        return
+    prev_span, cur_span = date_span(prev_df), date_span(cur_df)
+
+    def _span_days(span, month):
+        return (span[1] - span[0]).days + 1 if span else _days_in(month)
+
     b1, b2, b3, b4 = st.columns(4)
     prev_label = b1.text_input("직전월 표기", value=f"{pm['month']}월" if pm["month"] else "직전월")
-    prev_days = b2.number_input("직전월 집계 일수", min_value=0, max_value=31, value=_days_in(pm["month"]),
-                                help="일평균 계산용. 0이면 일평균을 표시하지 않습니다.")
+    prev_days = b2.number_input("직전월 집계 일수", min_value=0, max_value=366, value=_span_days(prev_span, pm["month"]),
+                                help="일평균 계산용. 일별 파일이면 날짜에서 자동 계산됩니다. 0이면 일평균을 표시하지 않습니다.")
     cur_label = b3.text_input("금월 표기", value=f"{cm['month']}월" if cm["month"] else "금월")
-    cur_days = b4.number_input("금월 집계 일수", min_value=0, max_value=31, value=_days_in(cm["month"]),
+    cur_days = b4.number_input("금월 집계 일수", min_value=0, max_value=366, value=_span_days(cur_span, cm["month"]),
                                help="월 중간 보고(예: 1~14일)라면 실제 일수로 바꿔주세요.")
 
     if prev_label.strip() == cur_label.strip():
         st.warning(f"직전월과 금월 표기가 모두 '{cur_label}'입니다. 보고서에 '{cur_label} vs {cur_label}'로 표시되니 "
                    "직전월 표기를 확인해 주세요. (파일명에서 월을 자동으로 읽습니다)")
 
-    s1, s2 = st.columns(2)
-    prev_sales = s1.number_input(f"{prev_label} 총매출(원)", min_value=0, step=100000, value=0,
-                                 help="광고 보고서 엑셀에는 총매출(자연매출 포함)이 없어 직접 입력합니다. 0이면 '입력 필요'로 표시됩니다.")
-    cur_sales = s2.number_input(f"{cur_label} 총매출(원)", min_value=0, step=100000, value=0)
+    # ---------------- 총매출 (월 합계 또는 구간별) ----------------
+    gran = choose_granularity(prev_df, cur_df)
+    bucket_sales: dict = {}
+    if gran:
+        unit = "1일" if gran == "day" else "7일"
+        st.markdown(f"**총매출 입력 · {unit} 단위** — 일별 보고서가 감지되어 추이 차트를 {unit} 단위로 그립니다. "
+                    "한 칸이라도 비어 있으면 차트는 생성되지 않습니다.")
+        saved_sales = st.session_state.setdefault("bucket_sales", {})
+        cols = st.columns(2)
+        totals = {}
+        for col, side, df, label in ((cols[0], "prev", prev_df, prev_label), (cols[1], "cur", cur_df, cur_label)):
+            buckets = make_buckets(df, side, gran)
+            table = pd.DataFrame({
+                "key": [b["key"] for b in buckets],
+                "구간": [b["label"] for b in buckets],
+                "광고비(참고)": [round(b["cost"]) for b in buckets],
+                "총매출(원)": pd.array([saved_sales.get(b["key"]) for b in buckets], dtype="Float64"),  # 빈칸은 공란 표시
+            })
+            col.caption(f"{label} ({buckets[0]['start']:%m/%d}~{buckets[-1]['end']:%m/%d})")
+            edited_sales = col.data_editor(
+                table, hide_index=True, width="stretch", disabled=["key", "구간", "광고비(참고)"],
+                column_order=["구간", "광고비(참고)", "총매출(원)"],
+                column_config={"광고비(참고)": st.column_config.NumberColumn(format="%d"),
+                               "총매출(원)": st.column_config.NumberColumn(min_value=0, step=10000, format="%d")},
+                key=f"sales::{side}::{gran}::{prev_file.name if side == 'prev' else cur_file.name}",
+            )
+            vals = {r["key"]: (None if pd.isna(r["총매출(원)"]) else _num(r["총매출(원)"]))
+                    for _, r in edited_sales.iterrows()}
+            saved_sales.update(vals)
+            bucket_sales.update({k: v for k, v in vals.items() if v})
+            totals[side] = sum(vals.values()) if all(vals.values()) else 0.0
+        prev_sales, cur_sales = totals["prev"], totals["cur"]
+        st.caption("핵심 지표의 총매출은 구간별 입력값의 합계로 계산됩니다.")
+    else:
+        if prev_span or cur_span:
+            st.info("한쪽 파일에만 날짜가 있어 월 합계 기준으로 비교합니다. 두 파일 모두 쿠팡 Wing에서 '일별'로 내려받으면 "
+                    "주/일 단위 추이 차트가 그려집니다.")
+        s1, s2 = st.columns(2)
+        prev_sales = s1.number_input(f"{prev_label} 총매출(원)", min_value=0, step=100000, value=0,
+                                     help="광고 보고서 엑셀에는 총매출(자연매출 포함)이 없어 직접 입력합니다. 0이면 '입력 필요'로 표시됩니다.")
+        cur_sales = s2.number_input(f"{cur_label} 총매출(원)", min_value=0, step=100000, value=0)
 
     with st.expander("⚙️ 분석 기준 (고급)"):
         g1, g2, g3, g4 = st.columns(4)
@@ -139,14 +188,6 @@ def make_tab():
         min_product_cost = g2.number_input("⑤ ROAS 순위 상품 최소 광고비(원)", min_value=0, step=1000, value=10000)
         min_clicks = g3.number_input("⑤ CVR 순위 상품 최소 클릭수", min_value=1, step=1, value=10)
         top_n = g4.number_input("TOP N", min_value=3, max_value=10, value=5)
-
-    # ---------------- 파일 로드 ----------------
-    try:
-        prev_df = _load(prev_file.getvalue(), prev_file.name, window)
-        cur_df = _load(cur_file.getvalue(), cur_file.name, window)
-    except ReportFileError as e:
-        st.error(str(e))
-        return
 
     # ---------------- 캠페인 설정 (목표 ROAS / 일 예산) ----------------
     st.subheader("캠페인 설정 · 목표 ROAS / 일 예산")
@@ -198,6 +239,7 @@ def make_tab():
         prev_total_sales=float(prev_sales), cur_total_sales=float(cur_sales),
         window=window, min_cost=float(min_cost), min_product_cost=float(min_product_cost),
         min_clicks=int(min_clicks), top_n=int(top_n), written=written, targets=targets,
+        bucket_sales=bucket_sales,
     )
     ctx = build_context(prev_df, cur_df, settings)
 
