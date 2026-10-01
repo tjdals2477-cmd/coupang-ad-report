@@ -123,6 +123,10 @@ def make_tab():
     cur_days = b4.number_input("금월 집계 일수", min_value=0, max_value=31, value=_days_in(cm["month"]),
                                help="월 중간 보고(예: 1~14일)라면 실제 일수로 바꿔주세요.")
 
+    if prev_label.strip() == cur_label.strip():
+        st.warning(f"직전월과 금월 표기가 모두 '{cur_label}'입니다. 보고서에 '{cur_label} vs {cur_label}'로 표시되니 "
+                   "직전월 표기를 확인해 주세요. (파일명에서 월을 자동으로 읽습니다)")
+
     s1, s2 = st.columns(2)
     prev_sales = s1.number_input(f"{prev_label} 총매출(원)", min_value=0, step=100000, value=0,
                                  help="광고 보고서 엑셀에는 총매출(자연매출 포함)이 없어 직접 입력합니다. 0이면 '입력 필요'로 표시됩니다.")

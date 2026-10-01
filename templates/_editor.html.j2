@@ -114,6 +114,8 @@
     root.querySelectorAll('.section.reveal').forEach(function(e){ e.classList.remove('reveal'); });
     root.querySelectorAll('.goal-bar-fill').forEach(function(e){ e.style.removeProperty('width'); });
     root.querySelectorAll('[data-edit-banner]').forEach(function(e){ e.remove(); });
+    root.querySelectorAll('.trend-tip').forEach(function(e){ e.hidden = true; e.innerHTML = ''; });
+    root.querySelectorAll('.hit.on').forEach(function(e){ e.classList.remove('on'); });
     var body = root.querySelector('body');
     body.classList.remove('editing');
     if (!body.getAttribute('class')) body.removeAttribute('class');

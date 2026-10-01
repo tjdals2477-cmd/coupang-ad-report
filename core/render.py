@@ -68,7 +68,13 @@ def report_data(ctx: dict) -> dict:
 
 def render_report(ctx: dict) -> str:
     tpl = _env.get_template("report.html.j2")
-    return tpl.render(**ctx, data_json=safe_json(report_data(ctx)))
+    trend = ctx.get("trend")
+    trend_json = safe_json({
+        "periods": list(trend["x_labels"]),
+        "series": [{"label": sr["label"], "color": sr["color"], "values": [sr["prev_txt"], sr["cur_txt"]],
+                    "delta": sr["delta"]} for sr in trend["series"]],
+    }) if trend else ""
+    return tpl.render(**ctx, data_json=safe_json(report_data(ctx)), trend_json=trend_json)
 
 
 def extract_report_data(html: str) -> dict | None:

@@ -144,6 +144,23 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(short("(09.16) LED 사각 천장등"), "LED 사각 천장등")
         self.assertEqual(short("안트브랜드_시스템시리즈_그로스전용제품"), "안트브랜드 시스템시리즈 그로스전용제품")
 
+    def test_trend_chart_requires_all_three_values(self):
+        self.assertIsNone(build_context(PREV, CUR, Settings(account="t"))["trend"])
+        self.assertIsNone(build_context(PREV, CUR, Settings(account="t", prev_total_sales=1_000_000))["trend"])
+        t = build_context(PREV, CUR, Settings(account="t", prev_total_sales=1_000_000,
+                                              cur_total_sales=2_000_000))["trend"]
+        self.assertEqual([sr["key"] for sr in t["series"]], ["sales", "revenue", "cost"])
+        self.assertEqual(t["series"][0]["cur"], 2_000_000)
+        for side in (0, 1):  # 직접 라벨이 서로 겹치지 않음
+            ys = sorted(sr["label_y"][side] for sr in t["series"])
+            self.assertTrue(all(b - a >= 15.9 for a, b in zip(ys, ys[1:])), ys)
+
+    def test_short_won(self):
+        from core.analysis import short_won
+        self.assertEqual(short_won(90_989_740), "9,099만")
+        self.assertEqual(short_won(120_000_000), "1.2억")
+        self.assertEqual(short_won(100_000_000), "1억")
+
     def test_total_sales_missing_shows_pending(self):
         ctx = build_context(PREV, CUR, Settings(account="t"))
         sales = ctx["kpis"][1]
@@ -203,6 +220,13 @@ class RenderTests(unittest.TestCase):
                                          {"label": "외부", "html": "<html><title>x</title></html>"}])
         self.assertEqual(skipped, ["외부"])
         self.assertNotIn('data-report="summary"', merged)
+
+    def test_trend_chart_rendered_only_with_sales(self):
+        self.assertNotIn('class="trend-card"', self.html)
+        ctx = build_context(PREV, CUR, Settings(account="t", prev_total_sales=1_000_000, cur_total_sales=2_000_000))
+        html = render_report(ctx)
+        self.assertIn('class="trend-card"', html)
+        self.assertEqual(html.count('class="hit"'), 2)
 
     def test_report_has_editor(self):
         self.assertIn("data-edit-kit", self.html)

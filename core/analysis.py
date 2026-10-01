@@ -1,6 +1,7 @@
 """보고서 섹션 ①~⑤에 들어갈 값을 계산한다. 렌더링과 분리해 테스트 가능하게 유지."""
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 
@@ -110,6 +111,86 @@ def kpi_cards(p: dict, c: dict, s: Settings) -> list[dict]:
         cards[1]["note"] = (cards[1]["note"] + "<br>" if cards[1]["note"] else "") + \
             f"{s.cur_label} 광고매출 비중 {c['revenue'] / s.cur_total_sales * 100:.1f}%"
     return cards
+
+
+# ---------- 섹션 ① 추이 차트 (총매출 · 광고전환매출 · 집행 광고비) ----------
+
+def short_won(v: float) -> str:
+    """차트 라벨용 축약: 90,989,740 → '9,099만', 120,000,000 → '1.2억'."""
+    if v >= 1e8:
+        return f"{v / 1e8:,.2f}".rstrip("0").rstrip(".") + "억"
+    if v >= 1e4:
+        return f"{v / 1e4:,.0f}만"
+    return f"{v:,.0f}"
+
+
+def _nice_step(raw: float) -> float:
+    if raw <= 0:
+        return 1.0
+    mag = 10 ** math.floor(math.log10(raw))
+    for m in (1, 2, 2.5, 5, 10):
+        if raw <= m * mag:
+            return m * mag
+    return 10 * mag
+
+
+def _spread(ys: list[float], gap: float, lo: float, hi: float) -> list[float]:
+    """라벨 y좌표가 gap보다 가까우면 위아래로 벌린다 (입력 순서 유지)."""
+    order = sorted(range(len(ys)), key=lambda i: ys[i])
+    out = list(ys)
+    for a, b in zip(order, order[1:]):
+        if out[b] - out[a] < gap:
+            out[b] = out[a] + gap
+    overflow = out[order[-1]] - hi
+    if overflow > 0:
+        for i in order:
+            out[i] -= overflow
+    return [max(lo, y) for y in out]
+
+
+def trend_chart(p: dict, c: dict, s: Settings) -> dict | None:
+    """직전월→금월 선 차트. 총매출·광고전환매출·집행 광고비 중 하나라도 비어 있으면 None."""
+    values = {
+        "sales": (s.prev_total_sales, s.cur_total_sales),
+        "revenue": (p["revenue"], c["revenue"]),
+        "cost": (p["cost"], c["cost"]),
+    }
+    if any(not v or v <= 0 for pair in values.values() for v in pair):
+        return None
+
+    W, H, L, R, T, B = 640, 280, 64, 28, 22, 40
+    pw, ph = W - L - R, H - T - B
+    xs = (L + pw * 0.16, L + pw * 0.68)  # 오른쪽은 이름+값 직접 라벨 공간
+    top = max(v for pair in values.values() for v in pair)
+    step = _nice_step(top * 1.1 / 4)
+    ymax = step * math.ceil(top * 1.1 / step)
+
+    def y(v):
+        return T + ph * (1 - v / ymax)
+
+    spec = [("sales", "총매출", "#5B4FE5", "circle"),
+            ("revenue", "광고 전환 매출", "#14b8a6", "square"),
+            ("cost", "집행 광고비", "#FF7A45", "diamond")]
+    series = []
+    for key, label, color, shape in spec:
+        pv, cv = values[key]
+        series.append({
+            "key": key, "label": label, "color": color, "shape": shape,
+            "prev": pv, "cur": cv, "prev_txt": won(pv), "cur_txt": won(cv),
+            "prev_short": short_won(pv), "cur_short": short_won(cv),
+            "delta": delta(cv, pv),
+            "pts": [(xs[0], y(pv)), (xs[1], y(cv))],
+        })
+    # 직접 라벨 위치 (겹침 방지)
+    for side in (0, 1):
+        ly = _spread([sr["pts"][side][1] + 4 for sr in series], 16, T + 8, T + ph)
+        for sr, yy in zip(series, ly):
+            sr.setdefault("label_y", [0, 0])[side] = yy
+    ticks = [{"y": y(v), "label": short_won(v) if v else "0"}
+             for v in [step * i for i in range(int(round(ymax / step)) + 1)]]
+    return {"w": W, "h": H, "left": L, "right": W - R, "top": T, "bottom": T + ph,
+            "xs": xs, "series": series, "ticks": ticks,
+            "x_labels": (s.prev_label, s.cur_label)}
 
 
 # ---------- 섹션 ② 최대 이슈 ----------
@@ -283,6 +364,7 @@ def build_context(prev_df: pd.DataFrame, cur_df: pd.DataFrame, s: Settings) -> d
         "s": s,
         "prev": p, "cur": c,
         "kpis": kpi_cards(p, c, s),
+        "trend": trend_chart(p, c, s),
         "headline": headline(issue, c, cur_c),
         "issue": issue,
         "best": best,
