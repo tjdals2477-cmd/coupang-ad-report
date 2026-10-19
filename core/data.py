@@ -33,7 +33,34 @@ def _read_raw(file, filename: str) -> pd.DataFrame:
                 except UnicodeDecodeError:
                     continue
             raise ReportFileError("CSV 인코딩을 읽을 수 없습니다 (UTF-8 / CP949 아님).")
-        return pd.read_excel(file)
+        return _read_report_sheet(file)
+
+
+# 광고보고서 xlsm 'raw' 시트·광고센터 상품 전환 보고서 등은 같은 값을 조금 다른 이름으로 쓴다 (공백·'(원)' 무시)
+_COL_ALIASES = {
+    "캠페인ID": "캠페인 ID", "캠페인명": "캠페인명", "캠페인": "캠페인명", "캠페인이름": "캠페인명",
+    "광고집행상품명": "광고집행 상품명", "광고집행옵션ID": "광고집행 옵션ID",
+    "노출수": "노출수", "클릭수": "클릭수", "광고비": "광고비",
+    "총주문수(14일)": "총 주문수(14일)", "총주문수(1일)": "총 주문수(1일)",
+    "총전환매출액(14일)": "총 전환매출액(14일)", "총전환매출액(1일)": "총 전환매출액(1일)",
+}
+
+
+def _canon(col) -> str:
+    c = str(col).strip()
+    return _COL_ALIASES.get(re.sub(r"\s+", "", c).replace("(원)", ""), c)
+
+
+def _read_report_sheet(file) -> pd.DataFrame:
+    """여러 시트 파일(광고보고서 xlsm 등)이면 'raw' 시트 → 옵션ID·광고비가 있는 첫 시트 순으로 고른다."""
+    xl = pd.ExcelFile(file)
+    names = xl.sheet_names
+    order = (["raw"] if "raw" in names else []) + [n for n in names if n != "raw"]
+    for sheet in order:
+        cols = {_canon(c) for c in xl.parse(sheet, nrows=0).columns}
+        if {"광고집행 옵션ID", "광고비"} <= cols:
+            return xl.parse(sheet)
+    return xl.parse(order[0])
 
 
 def _to_number(s: pd.Series) -> pd.Series:
@@ -51,7 +78,10 @@ def load_report(file, filename: str, window: str = "14일") -> pd.DataFrame:
     except Exception as e:  # 손상 파일, 비엑셀 파일 등
         raise ReportFileError(f"'{filename}' 파일을 열 수 없습니다: {e}") from e
 
-    df.columns = [str(c).strip() for c in df.columns]
+    df.columns = [_canon(c) for c in df.columns]
+    df = df.loc[:, ~pd.Index(df.columns).duplicated()]
+    if "캠페인 ID" not in df.columns and "캠페인명" in df.columns:
+        df["캠페인 ID"] = df["캠페인명"]  # 상품 전환 보고서에는 캠페인 ID가 없음 → 캠페인명으로 매칭
     need = BASE_COLS + list(WINDOW_COLS[window].values())
     missing = [c for c in need if c not in df.columns]
     if missing:
@@ -179,7 +209,7 @@ _RANGE_RE = re.compile(
 def guess_meta(filename: str) -> dict:
     """'안트_9월 광고보고서.xlsx' → {'account': '안트', 'month': 9, 'range': None}
     '9월16~9월22일.xlsx' → {'month': 9, 'range': ((9, 16), (9, 22)), 'label': '9/16~22', 'days': 7}"""
-    stem = re.sub(r"\.(xlsx|xls|csv)$", "", filename, flags=re.I)
+    stem = re.sub(r"\.(xlsx|xlsm|xls|csv)$", "", filename, flags=re.I)
     account = re.split(r"[_\s]", stem, maxsplit=1)[0] if "_" in stem else ""
     r = _RANGE_RE.search(stem)
     if r:

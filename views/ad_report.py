@@ -50,8 +50,8 @@ tab_make, tab_merge = st.tabs(["📄 보고서 생성", "🧩 보고서 통합"]
 # =====================================================================
 def make_tab():
     c1, c2 = st.columns(2)
-    prev_file = c1.file_uploader("① 직전월 광고 보고서", type=["xlsx", "xls", "csv"], key="prev_file")
-    cur_file = c2.file_uploader("② 금월 광고 보고서", type=["xlsx", "xls", "csv"], key="cur_file")
+    prev_file = c1.file_uploader("① 직전월 광고 보고서", type=["xlsx", "xlsm", "xls", "csv"], key="prev_file")
+    cur_file = c2.file_uploader("② 금월 광고 보고서", type=["xlsx", "xlsm", "xls", "csv"], key="cur_file")
 
     if not (prev_file and cur_file):
         st.info("직전월과 금월 광고 보고서 파일을 모두 업로드하세요. (예: `브랜드명_8월 광고보고서.xlsx`, `브랜드명_9월 광고보고서.xlsx`)")
