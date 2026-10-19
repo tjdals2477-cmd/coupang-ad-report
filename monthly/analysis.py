@@ -94,13 +94,23 @@ def build_ad_rows(dash: list | None, manual: list, raw: AdRaw | None, cutoff: da
     return rows
 
 
+def cvr_of(daily: dict, days: list) -> float:
+    """구매전환율(%) = 주문 ÷ 조회 — Wing·서플라이어 허브 화면 정의와 같고 월 총계와 정확히 일치.
+    조회 칸이 없는 파일이면 일별 구매전환율의 방문자 가중평균으로 대신한다."""
+    view = sum(daily[d].get("view", 0) for d in days)
+    if view:
+        return sum(daily[d]["ord"] for d in days) / view * 100
+    vis = sum(daily[d]["vis"] for d in days)
+    return sum(daily[d]["vis"] * daily[d]["cvr"] for d in days) / vis if vis else 0.0
+
+
 def period(daily: dict, ad_rows: list, s: date, e: date) -> dict:
     days = [d for d in _days(s, e) if d in daily]
     t = {"s": s, "e": e, "days": len(days),
          "rev": sum(daily[d]["rev"] for d in days), "vis": sum(daily[d]["vis"] for d in days),
          "ord": sum(daily[d]["ord"] for d in days)}
-    # 쿠팡 Wing 구매전환율을 방문자 가중평균 → Wing 월 총계와 일치
-    t["cvr"] = sum(daily[d]["vis"] * daily[d]["cvr"] for d in days) / t["vis"] if t["vis"] else 0.0
+    t["view"] = sum(daily[d].get("view", 0) for d in days)
+    t["cvr"] = cvr_of(daily, days)
     rows = [a for a in ad_rows if a["s"] >= s and a["e"] <= e]
     covered = {d for a in rows for d in _days(a["s"], a["e"])}
     t["addays"] = len(covered)
@@ -271,7 +281,7 @@ def weekly(daily: dict, start: date, cutoff: date, max_weeks: int = 8) -> list[d
             weeks.append({"s": days[0], "e": days[-1], "n": len(days), "partial": len(days) < 4,
                           "rev": sum(daily[d]["rev"] for d in days) / len(days),
                           "vis": vis / len(days),
-                          "cvr": sum(daily[d]["vis"] * daily[d]["cvr"] for d in days) / vis if vis else 0,
+                          "cvr": cvr_of(daily, days),
                           "label": f"{days[0].month}/{days[0].day}~{days[-1].month}/{days[-1].day}"})
         s += timedelta(7)
     return weeks[-max_weeks:]
@@ -360,7 +370,9 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
             continue
         option_by_month[t["m"]] = (best, gap)
         tol = 10 if t["partial"] else 2  # 진행 중인 달은 당일 부분집계가 섞일 수 있음
-        if gap is not None and abs(gap) > tol:
+        if best.partial:
+            checks.append(("info", f"{t['short']} 상품별 데이터는 상위 상품만 담긴 시트({best.source})라 급변 상품도 그 범위 안에서만 비교합니다."))
+        elif gap is not None and abs(gap) > tol:
             checks.append(("warn", f"{t['short']} 상품별 매출 합계({won(best.total)})가 일별 합계({won(t['rev'])})와 "
                                    f"{gap:+.0f}% 차이 납니다. 조회 기간이 맞는지 확인해 주세요. ({best.source})"))
     ad = ad_context(raw, cutoff, s.recent_days)
@@ -370,8 +382,11 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
     def scale_of(t):
         if not t["partial"] or t["m"] not in option_by_month:
             return 1.0
-        total = option_by_month[t["m"]][0].total
-        return (t["rev"] / t["days"] * t["month_days"]) / total if total and t["days"] else 1.0
+        sheet = option_by_month[t["m"]][0]
+        if sheet.partial:  # 상위 상품만 있는 시트는 합계 대조가 불가 → 단순 일수 환산
+            return t["month_days"] / t["days"] if t["days"] else 1.0
+        # 전체 시트: 당일 부분집계가 섞일 수 있어 일별 기준 월환산 매출에 비례 배분
+        return (t["rev"] / t["days"] * t["month_days"]) / sheet.total if sheet.total and t["days"] else 1.0
 
     win_months = [t for t in months if t["m"] in option_by_month]
     window = ((option_by_month[win_months[0]["m"]][0].rows, option_by_month[win_months[-1]["m"]][0].rows,
@@ -390,6 +405,7 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
                            "n_up": sum(1 for m in mv if m["diff"] > 0),
                            "n_shift": sum(1 for m in mv if m["shift"]),
                            "cov_a": ca, "cov_b": cb, "partial": tb["partial"],
+                           "top_only": option_by_month[ta["m"]][0].partial or option_by_month[tb["m"]][0].partial,
                            "gaps": ad["gaps"](ta["s"], tb["e"]) if ad["has"] else []})
 
     # 데이터 점검
@@ -458,7 +474,7 @@ def auto_headline(months, same, weeks, word) -> tuple[str, str]:
 
 def report_data(ctx: dict) -> dict:
     """통합 탭용 요약 수치 (보고서 HTML에 내장)."""
-    keep = ("rev", "vis", "ord", "cvr", "cost", "adrev", "ad_ok", "days", "partial", "label", "short", "tag", "m")
+    keep = ("rev", "vis", "view", "ord", "cvr", "cost", "adrev", "ad_ok", "days", "partial", "label", "short", "tag", "m")
     def slim(t):
         return {k: t[k] for k in keep if k in t} | {"cvr_w": t["cvr"] * t["vis"]}
     return {"kind": "monthly", "version": 1, "account": ctx["s"].account,

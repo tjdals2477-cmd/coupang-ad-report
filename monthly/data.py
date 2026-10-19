@@ -70,6 +70,7 @@ class OptionSheet:
     source: str            # "파일명 · 시트명"
     month: int | None
     rows: dict             # {옵션ID: {name, ch, rev, vis, ord}}
+    partial: bool = False  # 시트명에 'TOP'이 있으면 상위 상품만 담긴 시트 (합계 대조·전체 비교 불가)
 
     @property
     def total(self) -> float:
@@ -78,7 +79,7 @@ class OptionSheet:
 
 @dataclass
 class InsightData:
-    daily: dict = field(default_factory=dict)     # {date: {vis, ord, cvr, rev}}
+    daily: dict = field(default_factory=dict)     # {date: {vis, view, ord, cvr, rev}}
     options: list = field(default_factory=list)   # [OptionSheet]
     notes: list = field(default_factory=list)
 
@@ -97,12 +98,14 @@ def read_insight(data: bytes, name: str, into: InsightData | None = None) -> Ins
             continue
         if DAILY_COLS <= set(hdr):
             ix = {h: hdr.index(h) for h in DAILY_COLS}
+            i_view = hdr.index("조회") if "조회" in hdr else None
             months = []
             for r in it:
                 d = to_date(r[ix["날짜"]])
                 if not d:
                     continue  # 하단 총계 행
                 out.daily[d] = {"vis": num(r[ix["방문자"]]), "ord": num(r[ix["주문"]]),
+                                "view": num(r[i_view]) if i_view is not None else 0.0,
                                 "cvr": num(r[ix["구매전환율"]]), "rev": num(r[ix["매출(원)"]])}
                 months.append(d.month)
             if months:
@@ -127,7 +130,8 @@ def read_insight(data: bytes, name: str, into: InsightData | None = None) -> Ins
         if month is None:
             out.notes.append(f"'{name}' 상품별 시트의 월을 알 수 없어 제외했습니다. 파일명에 'n월'을 넣어주세요.")
             continue
-        out.options.append(OptionSheet(source=f"{name} · {title}", month=month, rows=rows))
+        out.options.append(OptionSheet(source=f"{name} · {title}", month=month, rows=rows,
+                                       partial="TOP" in title.upper()))
     if not found:
         raise MonthlyFileError(f"'{name}'에서 '기간별 판매량'(날짜·방문자·매출) 또는 '상품별 판매량'(옵션 ID·판매방식·매출) 시트를 찾지 못했습니다.")
     return out

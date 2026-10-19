@@ -201,6 +201,31 @@ class MonthlyTest(unittest.TestCase):
         self.assertEqual(ad["status"]("4"), "집행중")
         self.assertTrue(ad["status"]("3").startswith("중단(9/1~9/30 집행 후)"))
 
+    def test_cvr_is_orders_over_views_when_views_present(self):
+        rows = [DAILY_HDR] + [[f"2026-08-{d:02d}", "100", "400", "0", "20", "9.99%", "0", "1000"] for d in range(1, 11)]
+        ins = read_insight(xlsx({"기간별 판매량": rows}), "B_8월.xlsx", InsightData())
+        ctx = build_context(ins, None, None, MonthlySettings(account="b"))
+        self.assertAlmostEqual(ctx["months"][0]["cvr"], 5.0)   # 200 ÷ 4000, 일별 칸(9.99%)이 아님
+
+    def test_top_sheet_is_partial_and_skips_total_warning(self):
+        ins = InsightData()
+        ins.daily = dict(self.ins.daily)
+        for m, rev in ((8, 3_000_000), (9, 5_000_000)):
+            opts = [OPT_HDR, ["7", "탑상품", "탑상품", "1", "x", "로켓배송", str(rev), "1", "1", "10"]]
+            read_insight(xlsx({"상품별 판매량(TOP10)": opts}), f"G_{m}월.xlsx", ins)
+        self.assertTrue(all(o.partial for o in ins.options))
+        ctx = build_context(ins, None, None, self.s)
+        self.assertFalse(any("차이 납니다" in t for _, t in ctx["checks"]))
+        self.assertTrue(any("상위 상품만" in t for _, t in ctx["checks"]))
+        self.assertTrue(ctx["movers"][0]["top_only"])
+        self.assertEqual(ctx["movers"][0]["rows"][0]["diff"], 2_000_000)
+        # 진행 중인 달 TOP 시트는 일수 환산(31/10)만 적용
+        opts = [OPT_HDR, ["7", "탑상품", "탑상품", "1", "x", "로켓배송", "1000000", "1", "1", "10"]]
+        read_insight(xlsx({"상품별 판매량(TOP10)": opts}), "G_10월.xlsx", ins)
+        ctx = build_context(ins, None, None, self.s)
+        mv = ctx["movers"][1]["rows"][0]
+        self.assertAlmostEqual(mv["b"], 3_100_000)
+
     def test_render_and_merge(self):
         ctx = build_context(self.ins, self.raw, None, self.s)
         html = render_monthly(ctx)

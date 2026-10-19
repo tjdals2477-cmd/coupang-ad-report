@@ -76,6 +76,13 @@ def render_monthly(ctx: dict) -> str:
 
 # ---------------- 계정 통합 ----------------
 
+def _sum_cvr(ts: list[dict]) -> float:
+    if all(t.get("view") for t in ts):
+        return sum(t["ord"] for t in ts) / sum(t["view"] for t in ts) * 100
+    vis = sum(t["vis"] for t in ts)
+    return sum(t["cvr_w"] for t in ts) / vis if vis else 0
+
+
 def render_monthly_summary(datas: list[dict], title: str) -> str:
     """각 계정 보고서에 내장된 월별 수치를 월 단위로 합산."""
     labels = [t["short"] for t in datas[0]["months"]]
@@ -88,7 +95,7 @@ def render_monthly_summary(datas: list[dict], title: str) -> str:
         rev = sum(t["rev"] for t in ts)
         cost, adrev = sum(t["cost"] for t in ts), sum(t["adrev"] for t in ts)
         months.append({"short": short, "label": ts[0]["label"], "tag": ts[0].get("tag", ts[0]["label"]), "partial": ts[0]["partial"],
-                       "rev": rev, "vis": vis, "cvr": sum(t["cvr_w"] for t in ts) / vis if vis else 0,
+                       "rev": rev, "vis": vis, "cvr": _sum_cvr(ts),
                        "cost": cost if ad_ok else None, "adrev": adrev if ad_ok else None,
                        "ad_ratio": cost / rev * 100 if ad_ok and rev else None,
                        "ad_share": adrev / rev * 100 if ad_ok and rev else None, "n": len(ts)})
@@ -120,7 +127,7 @@ def render_monthly_summary(datas: list[dict], title: str) -> str:
         {"label": "방문자 수", "rows": [(m["tag"], f"{m['vis']:,.0f}명") for m in months],
          "delta": delta(last["vis"], same_vis if (last["partial"] and same_vis) else (prev or {}).get("vis", 0)), "how": base_how},
         {"label": "구매전환율", "rows": [(m["tag"], pct(m["cvr"], 2)) for m in months],
-         "delta": delta(last["cvr"], prev["cvr"], "pp") if prev else None, "how": "방문자 가중평균"},
+         "delta": delta(last["cvr"], prev["cvr"], "pp") if prev else None, "how": "Σ주문 ÷ Σ조회"},
     ]
     tpl = _env.get_template("monthly_summary.html.j2")
     return tpl.render(title=title, kpis=kpis, rows=rows, months=months,

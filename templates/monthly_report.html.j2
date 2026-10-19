@@ -213,6 +213,7 @@
       </div>
       {%- else %}<div class="empty">기준을 넘는 급변 상품이 없습니다.</div>{% endif %}
       <p class="top5-note">
+        {%- if mv.top_only %}상품별 데이터는 월별 매출 TOP 10 상품(+다른 달 TOP 10의 해당 월 값)만 포함합니다. {% endif -%}
         {%- if mv.partial %}{{ mv.b_label.split(' ')[0] }}은 진행 중이라 일평균×월 일수로 환산한 값입니다. {% endif -%}
         {%- if ad.has %}광고비는 광고집행 옵션 기준 실집행액(데이터 {{ mv.a_label }} {{ mv.cov_a[0] }}/{{ mv.cov_a[1] }}일 · {{ mv.b_label.split(' ')[0] }} {{ mv.cov_b[0] }}/{{ mv.cov_b[1] }}일){% if mv.gap_txt %} — 광고 데이터 없는 기간: {{ mv.gap_txt }}{% endif %}.
         광고 상태는 광고 데이터 마지막 {{ s.recent_days }}일{% if ad.recent %}({{ ad.recent[0].month }}/{{ ad.recent[0].day }}~{{ ad.recent[1].month }}/{{ ad.recent[1].day }}){% endif %} 기준.{% endif %}
@@ -229,7 +230,7 @@
       <li><b>총매출</b> — 쿠팡 Wing 비즈니스 인사이트 매출(취소 차감 후)</li>
       <li><b>매출 대비 광고비 비율</b> — 광고비 ÷ 총매출 × 100 (낮을수록 효율적)</li>
       <li><b>자연매출</b> — 총매출 − 광고전환매출(14일 기준)</li>
-      <li><b>구매전환율</b> — Wing 일별 구매전환율의 방문자 가중평균 (Wing 월 총계와 동일)</li>
+      <li><b>구매전환율</b> — 주문 ÷ 조회 (쿠팡 Wing·서플라이어 허브 화면과 같은 정의)</li>
       <li><b>진행 중인 달 비교</b> — 직전 달 같은 일수와 비교, 광고비는 일평균 비교</li>
       <li><b>채널 이동</b> — 옵션명이 같고 판매방식만 다른 옵션이 반대로 움직이면 이동으로 판단</li>
     </ul>
