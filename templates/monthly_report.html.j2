@@ -1,0 +1,272 @@
+{#- 계정 1개 월간 성과 보고서. ctx: s, months, kpis, headline, comp, wchart, mover_views -#}
+{%- macro chg(d) -%}
+  {%- if d -%}<div class="chg {{ d.dir }}">{{ d.text }}</div>{%- else -%}<div class="chg"></div>{%- endif -%}
+{%- endmacro -%}
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ s.account }} 쿠팡 월간 성과 보고서</title>
+{% include "_style.html.j2" %}
+<style>
+  .pc-row{padding:7px 0;}
+  .pc-num{font-size:15px;}
+  .chart-card{background:var(--card); border:1px solid var(--border); border-radius:18px; padding:18px 20px 12px; box-shadow:0 4px 20px rgba(20,20,43,0.05);}
+  .chart-card svg{display:block; width:100%; height:auto; font-family:inherit; overflow:visible;}
+  .chart-legend{display:flex; flex-wrap:wrap; gap:14px; font-size:12px; font-weight:700; color:var(--sub); margin-bottom:6px;}
+  .chart-legend span{display:inline-flex; align-items:center; gap:6px;}
+  .chart-legend i{width:10px; height:10px; border-radius:3px; display:inline-block;}
+  .chart-scroll{overflow-x:auto; -webkit-overflow-scrolling:touch;}
+  .chart-scroll svg{min-width:620px;}
+  .cl{font-size:12px; font-weight:800; fill:#fff; font-variant-numeric:tabular-nums;}
+  .cx{font-size:12px; font-weight:800; fill:var(--text);}
+  .cs{font-size:11px; font-weight:600; fill:var(--sub); font-variant-numeric:tabular-nums;}
+  .cv{font-size:11.5px; font-weight:800; fill:var(--text); font-variant-numeric:tabular-nums;}
+  .two-col{display:grid; grid-template-columns:1.1fr 1fr; gap:16px; align-items:start;}
+  .mini-table{width:100%; border-collapse:collapse; font-size:12.5px; background:var(--card); border-radius:14px; overflow:hidden; box-shadow:0 4px 16px rgba(20,20,43,0.04);}
+  .mini-table th{background:var(--indigo); color:#fff; font-weight:700; padding:9px 10px; text-align:right; white-space:nowrap;}
+  .mini-table td{padding:9px 10px; border-bottom:1px solid var(--border); text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums;}
+  .mini-table th:first-child,.mini-table td:first-child{text-align:left;}
+  .mini-table tr:last-child td{border-bottom:none;}
+  table.mv{min-width:980px;}
+  table.mv td.name{max-width:280px; white-space:normal; font-weight:600; line-height:1.4;}
+  table.mv td.note{white-space:normal; text-align:left; min-width:220px; font-size:11.5px; color:var(--sub); line-height:1.45;}
+  table.mv td.note b{color:var(--text);}
+  table.mv tr.down td.diff{color:var(--down); font-weight:800;}
+  table.mv tr.up td.diff{color:var(--up); font-weight:800;}
+  table.mv .sub{display:block; font-size:10.5px; color:var(--sub); font-weight:600;}
+  .chip{display:inline-block; font-size:10.5px; font-weight:700; padding:2px 8px; border-radius:999px; white-space:nowrap;}
+  .mv-filter{display:flex; gap:8px; flex-wrap:wrap; margin:12px 0 10px;}
+  .mv-panel{display:none;} .mv-panel.active{display:block; animation:fadeIn .35s ease;}
+  tr[hidden]{display:none;}
+  .defs{display:grid; grid-template-columns:repeat(2,1fr); gap:8px 20px; font-size:12px; color:var(--sub); margin:0; padding:0; list-style:none;}
+  .defs b{color:var(--text);}
+  @media (max-width:900px){ .two-col{grid-template-columns:1fr;} .defs{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <span class="eyebrow">쿠팡 온라인 매출 월간 보고 · {{ s.account }}</span>
+    <h1>{{ s.account }} 쿠팡 월간 성과 보고서</h1>
+    <div class="meta">{{ period_label }}{% if s.written %} &nbsp;|&nbsp; 작성일 {{ s.written }}{% endif %}</div>
+  </header>
+
+  <!-- 종합 요약 -->
+  <div class="section" style="margin-top:0;">
+    <div class="section-head">
+      <p class="section-title">월별 핵심 지표</p>
+      <p class="section-sub">매출 · 광고비 · 매출 대비 광고비 비율 · 방문자 · 구매전환율{% if last.partial %} — {{ last.short }}은 진행 중이라 {{ same.label if same else '직전 달' }}과 비교{% endif %}</p>
+    </div>
+    <div class="pc-grid">
+      {%- for k in kpis %}
+      <div class="pc-card">
+        <div class="pc-label">{{ k.label }}</div>
+        {%- for r in k.rows %}
+        <div class="pc-row {{ r.cls }}">
+          <span class="pc-tag">{{ r.tag }}</span>
+          {%- if r.text %}<span class="pc-num">{{ r.text }}</span>{% else %}<span class="pc-num pending">데이터 부족</span>{% endif %}
+        </div>
+        {%- endfor %}
+        {{ chg(k.delta) }}
+        {%- if k.how %}<div class="pc-diff">{{ k.how }}</div>{% endif %}
+      </div>
+      {%- endfor %}
+    </div>
+    <div class="focus-banner">
+      <div class="icon">🎯</div>
+      <div class="txt">
+        <b>{{ headline }}</b>
+        {%- if headline_sub %}<span>{{ headline_sub }}</span>{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- ① 매출 구성 -->
+  <div class="section">
+    <div class="section-head">
+      <p class="section-title">① 매출 구성 — 자연매출 vs 광고전환매출</p>
+      <p class="section-sub">광고 없이 팔리는 힘(자연매출)이 커지는지, 광고 의존도가 높아지는지</p>
+    </div>
+    <div class="two-col">
+      <div class="chart-card">
+        <div class="chart-legend"><span><i style="background:var(--teal)"></i>자연매출</span><span><i style="background:var(--indigo)"></i>광고전환매출</span></div>
+        {%- if comp %}
+        <svg viewBox="0 0 {{ comp.w }} {{ comp.h }}" role="img" aria-label="월별 매출 구성 비중">
+          {%- for b in comp.bars %}
+          <rect x="{{ '%.1f'|format(b.x) }}" y="{{ '%.1f'|format(b.ad_y) }}" width="{{ '%.1f'|format(b.w) }}" height="{{ '%.1f'|format(b.ad_h) }}" rx="6" fill="#5B4FE5"/>
+          <rect x="{{ '%.1f'|format(b.x) }}" y="{{ '%.1f'|format(b.nat_y) }}" width="{{ '%.1f'|format(b.w) }}" height="{{ '%.1f'|format(b.nat_h) }}" rx="6" fill="#14b8a6"/>
+          {%- if b.ad_h > 22 %}<text class="cl" x="{{ '%.1f'|format(b.cx) }}" y="{{ '%.1f'|format(b.ad_y + b.ad_h / 2 + 4) }}" text-anchor="middle">{{ '%.0f'|format(b.ad) }}%</text>{% endif %}
+          {%- if b.nat_h > 22 %}<text class="cl" x="{{ '%.1f'|format(b.cx) }}" y="{{ '%.1f'|format(b.nat_y + b.nat_h / 2 + 4) }}" text-anchor="middle">{{ '%.0f'|format(b.nat) }}%</text>{% endif %}
+          <text class="cx" x="{{ '%.1f'|format(b.cx) }}" y="{{ comp.bottom + 18 }}" text-anchor="middle">{{ b.label }}</text>
+          <text class="cs" x="{{ '%.1f'|format(b.cx) }}" y="{{ comp.bottom + 34 }}" text-anchor="middle">매출 {{ b.rev }}</text>
+          {%- endfor %}
+        </svg>
+        {%- else %}<div class="empty">광고 데이터가 없어 매출 구성을 계산할 수 없습니다.</div>{% endif %}
+      </div>
+      <div class="table-wrap">
+        <table class="mini-table">
+          <tr><th>월</th><th>총매출</th><th>광고전환매출</th><th>자연매출</th><th>자연 비중</th></tr>
+          {%- for t in months %}
+          <tr>
+            <td><b>{{ t.label }}</b></td>
+            <td>{{ '{:,.0f}'.format(t.rev) }}</td>
+            {%- if t.ad_ok %}
+            <td>{{ '{:,.0f}'.format(t.adrev) }}</td><td>{{ '{:,.0f}'.format(t.natural) }}</td><td><b>{{ '%.1f'|format(100 - t.ad_share) }}%</b></td>
+            {%- else %}<td colspan="3" class="pending">광고 데이터 부족</td>{% endif %}
+          </tr>
+          {%- endfor %}
+        </table>
+        <div class="note" style="margin-top:12px;">자연매출 = 총매출 − 광고전환매출(14일). 쿠팡 광고전환매출은 광고 클릭 후 다른 상품 구매(간접전환)까지 포함하므로 자연매출은 보수적으로(낮게) 잡힙니다.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ② 주차별 흐름 -->
+  <div class="section">
+    <div class="section-head">
+      <p class="section-title">② 최근 흐름 — 주차별 일평균 매출 · 구매전환율</p>
+      <p class="section-sub">월 합계로는 안 보이는 방향성: 최근 3주 기준 <b style="color:var(--indigo)">{{ trend_word }}</b></p>
+    </div>
+    <div class="chart-card">
+      <div class="chart-legend"><span><i style="background:#8C7CFF"></i>일평균 매출</span><span><i style="background:var(--amber)"></i>구매전환율</span><span><i style="background:#D9D6FB"></i>4일 미만 주(참고)</span></div>
+      {%- if wchart %}
+      <div class="chart-scroll">
+      <svg viewBox="0 0 {{ wchart.w }} {{ wchart.h }}" role="img" aria-label="주차별 일평균 매출과 구매전환율">
+        <line x1="0" x2="{{ wchart.w }}" y1="{{ wchart.bottom }}" y2="{{ wchart.bottom }}" stroke="#E4E4F0"/>
+        {%- for p in wchart.pts %}
+        <rect x="{{ '%.1f'|format(p.x) }}" y="{{ '%.1f'|format(p.y) }}" width="{{ '%.1f'|format(p.w) }}" height="{{ '%.1f'|format(p.h) }}" rx="6" fill="{{ '#D9D6FB' if p.partial else '#8C7CFF' }}"/>
+        <text class="cv" x="{{ '%.1f'|format(p.cx) }}" y="{{ '%.1f'|format(p.y - 6) }}" text-anchor="middle">{{ p.rev }}</text>
+        <text class="cx" x="{{ '%.1f'|format(p.cx) }}" y="{{ wchart.bottom + 18 }}" text-anchor="middle" style="font-size:11px">{{ p.label }}</text>
+        <text class="cs" x="{{ '%.1f'|format(p.cx) }}" y="{{ wchart.bottom + 33 }}" text-anchor="middle">{{ p.n }}일</text>
+        {%- endfor %}
+        <path d="{{ wchart.path }}" fill="none" stroke="#FF7A45" stroke-width="2.5" stroke-linejoin="round"/>
+        {%- for p in wchart.pts %}
+        <circle cx="{{ '%.1f'|format(p.cx) }}" cy="{{ '%.1f'|format(p.cy) }}" r="4.5" fill="#fff" stroke="#FF7A45" stroke-width="2.5"/>
+        <text class="cs" x="{{ '%.1f'|format(p.cx) }}" y="{{ '%.1f'|format(p.cy - 9) }}" text-anchor="middle" style="fill:#7A3B1D;font-weight:800">{{ p.cvr }}</text>
+        {%- endfor %}
+      </svg>
+      </div>
+      {%- else %}<div class="empty">주차 추이를 그리기에 데이터가 부족합니다.</div>{% endif %}
+    </div>
+    <div class="table-wrap" style="margin-top:14px;">
+      <table class="mini-table">
+        <tr><th>월</th><th>방문자</th><th>일평균 방문자</th><th>구매전환율</th><th>일평균 매출</th><th>광고비</th><th>매출 대비 광고비</th></tr>
+        {%- for t in months %}
+        <tr>
+          <td><b>{{ t.label }}</b></td>
+          <td>{{ '{:,.0f}'.format(t.vis) }}</td><td>{{ '{:,.0f}'.format(t.vis / t.days) }}</td>
+          <td>{{ '%.2f'|format(t.cvr) }}%</td><td>{{ '{:,.0f}'.format(t.rev / t.days) }}</td>
+          <td>{{ '{:,.0f}'.format(t.cost) if t.ad_ok else '-' }}</td><td>{{ ('%.1f'|format(t.ad_ratio)) ~ '%' if t.ad_ratio is not none else '-' }}</td>
+        </tr>
+        {%- endfor %}
+        {%- if same %}
+        <tr style="background:var(--indigo-bg)">
+          <td><b>{{ same.label }}</b></td>
+          <td>{{ '{:,.0f}'.format(same.vis) }}</td><td>{{ '{:,.0f}'.format(same.vis / same.days) }}</td>
+          <td>{{ '%.2f'|format(same.cvr) }}%</td><td>{{ '{:,.0f}'.format(same.rev / same.days) }}</td><td>-</td><td>-</td>
+        </tr>
+        {%- endif %}
+      </table>
+    </div>
+  </div>
+
+  <!-- ③ 급변 옵션 -->
+  <div class="section">
+    <div class="section-head">
+      <p class="section-title">③ 매출 급변 상품 (옵션 단위)</p>
+      <p class="section-sub">기준: 증감액 {{ '{:,.0f}'.format(s.min_diff) }}원 이상 &amp; 증감률 {{ '%.0f'|format(s.min_pct) }}% 이상 · 채널 이동(판매자배송↔로켓그로스)·광고 집행 여부 자동 표시</p>
+    </div>
+    {%- if mover_views %}
+    <div class="tab-bar" role="tablist">
+      {%- for mv in mover_views %}
+      <button type="button" class="tab-btn{% if loop.last %} active{% endif %}" data-mv="{{ mv.id }}" role="tab">{{ mv.title }} · {{ mv.rows|length }}개</button>
+      {%- endfor %}
+    </div>
+    {%- for mv in mover_views %}
+    <div class="mv-panel{% if loop.last %} active{% endif %}" data-mv-panel="{{ mv.id }}">
+      <div class="mv-filter">
+        <button type="button" class="sort-btn active" data-f="all">전체 {{ mv.rows|length }}</button>
+        <button type="button" class="sort-btn" data-f="down">감소 {{ mv.n_down }}</button>
+        <button type="button" class="sort-btn" data-f="up">증가 {{ mv.n_up }}</button>
+        {%- if mv.n_shift %}<button type="button" class="sort-btn" data-f="shift">채널 이동 {{ mv.n_shift }}</button>{% endif %}
+      </div>
+      {%- if mv.rows %}
+      <div class="table-wrap">
+        <table class="top5-table mv">
+          <tr><th>상품(옵션)</th><th>판매방식</th><th>{{ mv.a_label }}</th><th>{{ mv.b_label }}</th><th>증감</th><th>광고</th><th>광고비 {{ mv.a_label }}→{{ mv.b_label.split(' ')[0] }}</th><th style="text-align:left">이슈(자동)</th></tr>
+          {%- for r in mv.rows %}
+          <tr class="{{ r.dir }}" data-dir="{{ r.dir }}" data-shift="{{ '1' if r.shift else '' }}">
+            <td class="name">{{ r.name }}<span class="sub">{{ r.oid }}</span></td>
+            <td>{{ r.ch }}</td>
+            <td>{{ '{:,.0f}'.format(r.a) }}</td>
+            <td>{{ '{:,.0f}'.format(r.b) }}</td>
+            <td class="diff">{{ r.diff_t }}<span class="sub">{{ r.pct_t }}</span></td>
+            <td><span class="chip {{ r.st_cls }}">{{ r.ad_status }}</span></td>
+            <td>{{ r.ad_a_t }} → {{ r.ad_b_t }}{% if r.ad_d %}<span class="sub">{{ r.ad_d.text }}</span>{% endif %}</td>
+            <td class="note">{% if r.note %}<b>{{ r.note }}</b>{% endif %}</td>
+          </tr>
+          {%- endfor %}
+        </table>
+      </div>
+      {%- else %}<div class="empty">기준을 넘는 급변 상품이 없습니다.</div>{% endif %}
+      <p class="top5-note">
+        {%- if mv.partial %}{{ mv.b_label.split(' ')[0] }}은 진행 중이라 일평균×월 일수로 환산한 값입니다. {% endif -%}
+        {%- if ad.has %}광고비는 광고집행 옵션 기준 실집행액(데이터 {{ mv.a_label }} {{ mv.cov_a[0] }}/{{ mv.cov_a[1] }}일 · {{ mv.b_label.split(' ')[0] }} {{ mv.cov_b[0] }}/{{ mv.cov_b[1] }}일){% if mv.gap_txt %} — 광고 데이터 없는 기간: {{ mv.gap_txt }}{% endif %}.
+        광고 상태는 광고 데이터 마지막 {{ s.recent_days }}일{% if ad.recent %}({{ ad.recent[0].month }}/{{ ad.recent[0].day }}~{{ ad.recent[1].month }}/{{ ad.recent[1].day }}){% endif %} 기준.{% endif %}
+      </p>
+    </div>
+    {%- endfor %}
+    {%- else %}<div class="empty">상품별 판매량 데이터가 2개월 이상 있어야 급변 상품을 비교할 수 있습니다.</div>{% endif %}
+  </div>
+
+  <!-- 용어 -->
+  <div class="section">
+    <div class="section-head"><p class="section-title">지표 정의</p></div>
+    <ul class="defs">
+      <li><b>총매출</b> — 쿠팡 Wing 비즈니스 인사이트 매출(취소 차감 후)</li>
+      <li><b>매출 대비 광고비 비율</b> — 광고비 ÷ 총매출 × 100 (낮을수록 효율적)</li>
+      <li><b>자연매출</b> — 총매출 − 광고전환매출(14일 기준)</li>
+      <li><b>구매전환율</b> — Wing 일별 구매전환율의 방문자 가중평균 (Wing 월 총계와 동일)</li>
+      <li><b>진행 중인 달 비교</b> — 직전 달 같은 일수와 비교, 광고비는 일평균 비교</li>
+      <li><b>채널 이동</b> — 옵션명이 같고 판매방식만 다른 옵션이 반대로 움직이면 이동으로 판단</li>
+    </ul>
+  </div>
+
+  <footer>쿠팡 Wing 비즈니스 인사이트 · 광고 보고서 원본으로 자동 생성 · {{ s.account }} 쿠팡 월간 성과 보고서</footer>
+</div>
+
+<script id="report-data" type="application/json">{{ data_json | safe }}</script>
+<script>
+(function(){
+  // ---- 급변 상품: 기간 탭 · 필터 ----
+  document.querySelectorAll('[data-mv]').forEach(function(b){
+    b.addEventListener('click', function(){
+      document.querySelectorAll('[data-mv]').forEach(function(x){ x.classList.toggle('active', x === b); });
+      document.querySelectorAll('[data-mv-panel]').forEach(function(p){ p.classList.toggle('active', p.dataset.mvPanel === b.dataset.mv); });
+    });
+  });
+  document.querySelectorAll('.mv-panel').forEach(function(panel){
+    panel.querySelectorAll('[data-f]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var f = b.dataset.f;
+        panel.querySelectorAll('[data-f]').forEach(function(x){ x.classList.toggle('active', x === b); });
+        panel.querySelectorAll('tr[data-dir]').forEach(function(tr){
+          tr.hidden = !(f === 'all' || (f === 'shift' ? tr.dataset.shift : tr.dataset.dir === f));
+        });
+      });
+    });
+  });
+  // ---- 스크롤 리빌 ----
+  if (!('IntersectionObserver' in window)) { document.querySelectorAll('.section').forEach(function(s){ s.classList.add('reveal'); }); return; }
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(en){ if (en.isIntersecting){ en.target.classList.add('reveal'); io.unobserve(en.target); } });
+  }, {threshold:0.08});
+  document.querySelectorAll('.section').forEach(function(sec){ io.observe(sec); });
+})();
+</script>
+{% include "_editor.html.j2" %}
+</body>
+</html>

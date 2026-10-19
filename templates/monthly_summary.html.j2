@@ -1,0 +1,92 @@
+{#- 계정 통합 월간 요약. ctx: title, kpis, rows, months, comp, accounts -#}
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ title }}</title>
+{% include "_style.html.j2" %}
+<style>
+  .pc-row{padding:7px 0;} .pc-num{font-size:15px;}
+  .chart-card{background:var(--card); border:1px solid var(--border); border-radius:18px; padding:18px 20px 12px; box-shadow:0 4px 20px rgba(20,20,43,0.05);}
+  .chart-card svg{display:block; width:100%; height:auto; font-family:inherit;}
+  .chart-legend{display:flex; gap:14px; font-size:12px; font-weight:700; color:var(--sub); margin-bottom:6px;}
+  .chart-legend span{display:inline-flex; align-items:center; gap:6px;} .chart-legend i{width:10px; height:10px; border-radius:3px;}
+  .cl{font-size:12px; font-weight:800; fill:#fff;} .cx{font-size:12px; font-weight:800; fill:var(--text);} .cs{font-size:11px; font-weight:600; fill:var(--sub);}
+  .share{height:8px; border-radius:6px; background:var(--border); overflow:hidden; min-width:80px;}
+  .share i{display:block; height:100%; background:var(--indigo);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="eyebrow">쿠팡 온라인 매출 월간 보고 · 계정 통합</span>
+    <h1>{{ accounts|length }}계정 통합 월간 성과</h1>
+    <div class="meta">{{ accounts|join(' · ') }}{% if period_label %} &nbsp;|&nbsp; {{ period_label }}{% endif %}</div>
+  </header>
+
+  <div class="section" style="margin-top:0;">
+    <div class="section-head">
+      <p class="section-title">통합 핵심 지표</p>
+      <p class="section-sub">전 계정 합산 · 광고 지표는 모든 계정의 광고 데이터가 있을 때만 합산</p>
+    </div>
+    <div class="pc-grid">
+      {%- for k in kpis %}
+      <div class="pc-card">
+        <div class="pc-label">{{ k.label }}</div>
+        {%- for tag, val in k.rows %}
+        <div class="pc-row {{ 'cur' if loop.last else 'prev' }}"><span class="pc-tag">{{ tag }}</span><span class="pc-num">{{ val }}</span></div>
+        {%- endfor %}
+        {%- if k.delta %}<div class="chg {{ k.delta.dir }}">{{ k.delta.text }}</div>{% else %}<div class="chg"></div>{% endif %}
+        {%- if k.how %}<div class="pc-diff">{{ k.how }}</div>{% endif %}
+      </div>
+      {%- endfor %}
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head"><p class="section-title">① 계정별 비교 ({{ months[-1].label }})</p></div>
+    <div class="table-wrap">
+      <table class="top5-table">
+        <tr><th>계정</th><th>매출 비중</th><th>총매출</th><th>증감</th><th>광고비</th><th>광고비 비율</th><th>자연 비중</th><th>방문자</th><th>구매전환율</th><th>최근 흐름</th></tr>
+        {%- for r in rows %}
+        <tr>
+          <td class="name">{{ r.account }}</td>
+          <td><div class="share"><i style="width:{{ '%.1f'|format(r.rev_share) }}%"></i></div></td>
+          <td>{{ r.rev }}</td>
+          <td>{% if r.rev_d %}<span class="d-{{ r.rev_d.dir }}">{{ r.rev_d.text }}</span>{% else %}-{% endif %}</td>
+          <td>{{ r.cost }}</td><td>{{ r.ratio }}</td><td>{{ r.share }}</td><td>{{ r.vis }}</td><td>{{ r.cvr }}</td>
+          <td class="key">{{ r.trend }}</td>
+        </tr>
+        {%- endfor %}
+      </table>
+    </div>
+  </div>
+
+  {%- if comp %}
+  <div class="section">
+    <div class="section-head"><p class="section-title">② 통합 매출 구성 — 자연매출 vs 광고전환매출</p></div>
+    <div class="chart-card">
+      <div class="chart-legend"><span><i style="background:var(--teal)"></i>자연매출</span><span><i style="background:var(--indigo)"></i>광고전환매출</span></div>
+      <svg viewBox="0 0 {{ comp.w }} {{ comp.h }}" role="img" aria-label="통합 매출 구성">
+        {%- for b in comp.bars %}
+        <rect x="{{ '%.1f'|format(b.x) }}" y="{{ '%.1f'|format(b.ad_y) }}" width="{{ '%.1f'|format(b.w) }}" height="{{ '%.1f'|format(b.ad_h) }}" rx="6" fill="#5B4FE5"/>
+        <rect x="{{ '%.1f'|format(b.x) }}" y="{{ '%.1f'|format(b.nat_y) }}" width="{{ '%.1f'|format(b.w) }}" height="{{ '%.1f'|format(b.nat_h) }}" rx="6" fill="#14b8a6"/>
+        {%- if b.ad_h > 22 %}<text class="cl" x="{{ '%.1f'|format(b.cx) }}" y="{{ '%.1f'|format(b.ad_y + b.ad_h / 2 + 4) }}" text-anchor="middle">{{ '%.0f'|format(b.ad) }}%</text>{% endif %}
+        {%- if b.nat_h > 22 %}<text class="cl" x="{{ '%.1f'|format(b.cx) }}" y="{{ '%.1f'|format(b.nat_y + b.nat_h / 2 + 4) }}" text-anchor="middle">{{ '%.0f'|format(b.nat) }}%</text>{% endif %}
+        <text class="cx" x="{{ '%.1f'|format(b.cx) }}" y="{{ comp.bottom + 18 }}" text-anchor="middle">{{ b.label }}</text>
+        <text class="cs" x="{{ '%.1f'|format(b.cx) }}" y="{{ comp.bottom + 34 }}" text-anchor="middle">매출 {{ b.rev }}</text>
+        {%- endfor %}
+      </svg>
+    </div>
+  </div>
+  {%- endif %}
+
+  <footer>각 계정 보고서에 내장된 수치를 합산했습니다 · {{ title }}</footer>
+</div>
+<script>
+document.querySelectorAll('.section').forEach(function(s){ s.classList.add('reveal'); });
+</script>
+{% include "_editor.html.j2" %}
+</body>
+</html>
