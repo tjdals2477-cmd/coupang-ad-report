@@ -179,6 +179,7 @@ class AdPeriod:
     s: date | None = None                          # 분석 시 확정 (연도는 판매 데이터에서)
     e: date | None = None
     use_total: bool = True                         # 계정 전체 광고 합계로도 사용할지
+    clamped: bool = False                          # 진행 중인 달이라 종료일을 집계 마지막 날로 맞춤
 
     @property
     def cost(self) -> float:

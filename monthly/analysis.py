@@ -42,8 +42,9 @@ def man(v: float) -> str:
 
 # ---------------- 기간 집계 ----------------
 
-def resolve_periods(raw: AdRaw | None, daily_dates) -> None:
-    """기간 합계 광고 파일의 시작·종료일 확정 (이미 정해진 건 유지). 연도는 판매 데이터에서 해당 월이 있는 해."""
+def resolve_periods(raw: AdRaw | None, daily_dates, cutoff: date | None = None) -> None:
+    """기간 합계 광고 파일의 시작·종료일 확정 (이미 정해진 건 유지). 연도는 판매 데이터에서 해당 월이 있는 해.
+    파일명이 '10월'처럼 월만 있고 그 달이 진행 중이면 종료일을 집계 마지막 날(cutoff)로 본다."""
     if not raw:
         return
     years = {}
@@ -58,6 +59,8 @@ def resolve_periods(raw: AdRaw | None, daily_dates) -> None:
         try:
             p.s = date(y1, m1, d1)
             p.e = _month_end(y2, m2) if d2 == 0 else date(y2, m2, d2)
+            if d2 == 0 and cutoff and p.s <= cutoff < p.e:
+                p.e, p.clamped = cutoff, True
         except ValueError:
             p.s = p.e = None
 
@@ -306,7 +309,7 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
         raise ValueError("일별 판매 데이터('기간별 판매량' 시트)가 없습니다.")
     cutoff = s.cutoff or max(d for d, v in daily.items() if v["vis"] > 0)
     daily = {d: v for d, v in daily.items() if d <= cutoff}
-    resolve_periods(raw, daily)
+    resolve_periods(raw, daily, cutoff)
     ad_rows = build_ad_rows(dash, s.manual_ads, raw, cutoff)
 
     months = []
@@ -425,6 +428,8 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
             checks.append(("warn", f"'{p.source}'은(는) 날짜 없는 기간 합계 파일인데 기간을 알 수 없어 제외했습니다. 화면에서 기간을 지정하세요."))
             continue
         tag = f"'{p.source}' ({p.s.month}/{p.s.day}~{p.e.month}/{p.e.day} 기간 합계, 캠페인 {len(p.campaigns)}개, 광고비 {won(p.cost)})"
+        if getattr(p, "clamped", False):
+            checks.append(("info", f"{tag}는 진행 중인 달이라 집계 마지막 날까지의 데이터로 보았습니다. 다른 기간이면 화면에서 고쳐주세요."))
         if not p.use_total:
             checks.append(("info", f"{tag}는 계정 전체가 아니라고 보고 옵션별 광고비에만 반영했습니다."))
         if dash:

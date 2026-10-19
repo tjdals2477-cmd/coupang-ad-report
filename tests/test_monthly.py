@@ -177,6 +177,14 @@ class MonthlyTest(unittest.TestCase):
         self.assertEqual(ctx["last"]["cost"], 600)              # 10월 캠페인 3행 합계
         self.assertTrue(any("대시보드" in t and "다릅니다" in t for _, t in ctx["checks"]))
 
+    def test_current_month_period_file_clamped_to_cutoff(self):
+        raw = read_ad_raw(self._period_file([("4", 700_000, 1_000_000), ("3", 1, 0)]), "G_10월 광고보고서.xlsx", AdRaw())
+        ctx = build_context(self.ins, raw, None, self.s)
+        self.assertEqual((raw.periods[0].s, raw.periods[0].e), (date(2026, 10, 1), date(2026, 10, 10)))
+        self.assertTrue(ctx["last"]["ad_ok"])
+        self.assertEqual(ctx["last"]["cost"], 700_001)
+        self.assertTrue(any("진행 중인 달" in t for _, t in ctx["checks"]))
+
     def test_conversion_report_headers_and_single_campaign(self):
         raw = read_ad_raw(self._period_file([("3", 50_000, 0)], campaigns=("AI",), conv_style=True),
                           "AI_상품전환_0901-0909.xlsx", AdRaw())

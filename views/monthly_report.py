@@ -112,7 +112,7 @@ def make_tab():
                f"상품별 시트 {len(ins.options)}개 · 광고 raw {len(raw.by_day) if raw else 0}일")
 
     if raw and raw.periods:
-        resolve_periods(raw, ins.daily)
+        resolve_periods(raw, ins.daily, cutoff)
         st.markdown("**기간 합계 광고 파일** — 날짜 없이 기간 전체로 내려받은 광고보고서. 기간은 파일명에서 읽었으니 확인해 주세요.")
         for i, p in enumerate(raw.periods):
             k1, k2, k3 = st.columns([2.2, 1.4, 1])
