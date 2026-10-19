@@ -10,7 +10,7 @@ import streamlit as st
 
 from core.analysis import won
 from core.render import extract_report_data, extract_title
-from monthly.analysis import MonthlySettings, build_context
+from monthly.analysis import MonthlySettings, build_context, resolve_periods
 from monthly.data import (AdRaw, InsightData, MonthlyFileError, dashboard_sheets, read_ad_dashboard,
                           read_ad_raw, read_insight)
 from monthly.render import merge_monthly, render_monthly
@@ -110,6 +110,21 @@ def make_tab():
                            help="방문자가 있는 마지막 날로 자동 설정됩니다(당일 부분집계 제외).")
     c2.caption(f"판매 데이터 {min(ins.daily):%Y.%m.%d} ~ {max(ins.daily):%Y.%m.%d} · "
                f"상품별 시트 {len(ins.options)}개 · 광고 raw {len(raw.by_day) if raw else 0}일")
+
+    if raw and raw.periods:
+        resolve_periods(raw, ins.daily)
+        st.markdown("**기간 합계 광고 파일** — 날짜 없이 기간 전체로 내려받은 광고보고서. 기간은 파일명에서 읽었으니 확인해 주세요.")
+        for i, p in enumerate(raw.periods):
+            k1, k2, k3 = st.columns([2.2, 1.4, 1])
+            k1.caption(f"📄 {p.source}  \n캠페인 {len(p.campaigns)}개 · 옵션 {len(p.opt)}개 · "
+                       f"광고비 {won(p.cost)} · 광고매출 {won(p.rev)}")
+            default = (p.s, p.e) if p.s and p.e else (date(cutoff.year, cutoff.month, 1), cutoff)
+            rng = k2.date_input("기간", value=default, key=f"m_per::{i}::{p.source}")
+            if isinstance(rng, (tuple, list)) and len(rng) == 2:
+                p.s, p.e = rng
+            p.use_total = k3.checkbox("계정 전체 광고", value=p.use_total, key=f"m_pertot::{i}::{p.source}",
+                                      help="모든 캠페인이 들어 있는 파일이면 체크 → 월 광고비·광고매출 합계에도 사용(대시보드보다 우선). "
+                                           "캠페인 1개짜리 파일은 체크 해제(옵션별 광고비에만 반영).")
 
     # ---------------- 보정 · 기준 ----------------
     st.subheader("② 광고 합계 보정 · 분석 기준")

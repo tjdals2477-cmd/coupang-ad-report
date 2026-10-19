@@ -144,6 +144,63 @@ class MonthlyTest(unittest.TestCase):
         self.assertEqual(trend_word([3, 2, 1]), "하락 중")
         self.assertEqual(trend_word([1, 2]), "판단 보류")
 
+    # ---------- 날짜 없는 기간 합계 광고 파일 ----------
+    def test_period_from_name(self):
+        from monthly.data import period_from_name
+        self.assertEqual(period_from_name("안트_9월 광고 보고서.xlsm"), (9, 1, 9, 0))
+        self.assertEqual(period_from_name("안트_AI_상품전환_0901-0909.xlsx"), (9, 1, 9, 9))
+        self.assertEqual(period_from_name("광고_9월16~9월22일.xlsx"), (9, 16, 9, 22))
+        self.assertIsNone(period_from_name("광고보고서.xlsx"))
+
+    def _period_file(self, rows, campaigns=("A", "B"), conv_style=False):
+        if conv_style:  # 광고센터 상품 전환 보고서 헤더
+            hdr = ["캠페인 이름", "광고 집행 옵션 ID", "광고비(원)", "총 전환 매출액 (14일)(원)"]
+        else:           # 광고보고서 xlsm raw 시트 (날짜 칸은 있지만 비어 있음)
+            hdr = ["날짜", "캠페인", "광고집행 옵션ID", "광고비", "총 전환매출액(14일)"]
+        body = []
+        for i, (oid, cost, rev) in enumerate(rows):
+            camp = campaigns[i % len(campaigns)]
+            body.append([camp, oid, cost, rev] if conv_style else [None, camp, oid, cost, rev])
+        return xlsx({"raw" if not conv_style else "Sheet1": [hdr] + body})
+
+    def test_period_file_parsed_and_used_for_totals(self):
+        raw = read_ad_raw(self._period_file([("4", 2_000_000, 9_000_000), ("3", 100_000, 0)]), "A_9월 광고 보고서.xlsm", AdRaw())
+        self.assertEqual(len(raw.periods), 1)
+        self.assertTrue(raw.periods[0].use_total)
+        dash = [{"s": date(2026, 9, 1), "e": date(2026, 9, 30), "cost": 1_000_000, "adrev": 1}]  # 틀린 대시보드
+        # 대시보드는 같은 주에 캠페인별 여러 행 → 기간 합계와 안 겹치는 행은 모두 유지돼야 함
+        dash += [{"s": date(2026, 10, 1), "e": date(2026, 10, 10), "cost": c, "adrev": 0} for c in (100, 200, 300)]
+        ctx = build_context(self.ins, raw, dash, self.s)
+        sep = ctx["months"][1]
+        self.assertTrue(sep["ad_ok"])
+        self.assertEqual(sep["cost"], 2_100_000)                # 광고보고서가 대시보드보다 우선
+        self.assertEqual(ctx["last"]["cost"], 600)              # 10월 캠페인 3행 합계
+        self.assertTrue(any("대시보드" in t and "다릅니다" in t for _, t in ctx["checks"]))
+
+    def test_conversion_report_headers_and_single_campaign(self):
+        raw = read_ad_raw(self._period_file([("3", 50_000, 0)], campaigns=("AI",), conv_style=True),
+                          "AI_상품전환_0901-0909.xlsx", AdRaw())
+        p = raw.periods[0]
+        self.assertFalse(p.use_total)                           # 캠페인 1개 → 계정 전체 아님
+        ctx = build_context(self.ins, raw, None, self.s)
+        self.assertFalse(ctx["months"][1]["ad_ok"])             # 합계에는 안 씀
+        from monthly.analysis import ad_context, resolve_periods
+        resolve_periods(raw, self.ins.daily)
+        ad = ad_context(raw, date(2026, 10, 10), 7)
+        self.assertEqual(ad["spend"]("3", date(2026, 9, 1), date(2026, 9, 30)), 50_000)
+
+    def test_period_overrides_daily_within_range_and_status(self):
+        raw = AdRaw()
+        read_ad_raw(ad_raw_file([(date(2026, 9, 20), "3", 10, 0), (date(2026, 10, 1), "4", 10, 0)]), "d.xlsx", raw)
+        read_ad_raw(self._period_file([("3", 300_000, 0), ("4", 1, 0)]), "A_9월 광고 보고서.xlsm", raw)
+        from monthly.analysis import ad_context, resolve_periods
+        resolve_periods(raw, self.ins.daily)
+        ad = ad_context(raw, date(2026, 10, 1), 1)
+        self.assertEqual(ad["spend"]("3", date(2026, 9, 1), date(2026, 9, 30)), 300_000)  # 9/20 일별은 기간합계에 포함
+        self.assertEqual(ad["coverage"](date(2026, 9, 1), date(2026, 9, 30)), (30, 30))
+        self.assertEqual(ad["status"]("4"), "집행중")
+        self.assertTrue(ad["status"]("3").startswith("중단(9/1~9/30 집행 후)"))
+
     def test_render_and_merge(self):
         ctx = build_context(self.ins, self.raw, None, self.s)
         html = render_monthly(ctx)

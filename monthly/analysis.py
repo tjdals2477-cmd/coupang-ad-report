@@ -42,10 +42,47 @@ def man(v: float) -> str:
 
 # ---------------- 기간 집계 ----------------
 
+def resolve_periods(raw: AdRaw | None, daily_dates) -> None:
+    """기간 합계 광고 파일의 시작·종료일 확정 (이미 정해진 건 유지). 연도는 판매 데이터에서 해당 월이 있는 해."""
+    if not raw:
+        return
+    years = {}
+    for d in daily_dates:
+        years.setdefault(d.month, d.year)
+    for p in raw.periods:
+        if p.s and p.e or not p.md:
+            continue
+        m1, d1, m2, d2 = p.md
+        y1 = years.get(m1, max(years.values()) if years else date.today().year)
+        y2 = y1 + (1 if m2 < m1 else 0)
+        try:
+            p.s = date(y1, m1, d1)
+            p.e = _month_end(y2, m2) if d2 == 0 else date(y2, m2, d2)
+        except ValueError:
+            p.s = p.e = None
+
+
+def active_periods(raw: AdRaw | None, total_only: bool = False) -> list:
+    if not raw:
+        return []
+    return [p for p in raw.periods if p.s and p.e and (p.use_total or not total_only)]
+
+
 def build_ad_rows(dash: list | None, manual: list, raw: AdRaw | None, cutoff: date) -> list[dict]:
-    """광고 합계 행. 우선순위: 대시보드 > 수기 보정 > 광고 raw 일합계."""
-    rows = [{**r, "src": "대시보드"} for r in (dash or [])]
-    covered = {d for r in rows for d in _days(r["s"], r["e"])}
+    """광고 합계 행. 우선순위: 광고보고서 기간 합계(계정 전체) > 대시보드 > 수기 보정 > 광고 raw 일합계.
+    기간 합계 파일은 쿠팡이 직접 낸 기간 전체 수치라 수기 입력 대시보드보다 우선하고, 겹치는 대시보드 행은 버린다."""
+    rows, covered = [], set()
+    for p in active_periods(raw, total_only=True):
+        days = set(_days(p.s, min(p.e, cutoff)))
+        if p.e <= cutoff and not days & covered:
+            rows.append({"s": p.s, "e": p.e, "cost": p.cost, "adrev": p.rev, "src": f"광고보고서({p.source})"})
+            covered |= days
+    by_period = set(covered)
+    for r in dash or []:  # 대시보드는 같은 주에 캠페인별 여러 행 → 기간 합계 파일과 겹칠 때만 버린다
+        days = set(_days(r["s"], r["e"]))
+        if not days & by_period:
+            rows.append({**r, "src": "대시보드"})
+            covered |= days
     for d, c, a in manual:
         if d not in covered:
             rows.append({"s": d, "e": d, "cost": c, "adrev": a, "src": "수기"}); covered.add(d)
@@ -71,7 +108,7 @@ def period(daily: dict, ad_rows: list, s: date, e: date) -> dict:
     t["cost"] = sum(a["cost"] for a in rows)
     t["adrev"] = sum(a["adrev"] for a in rows)
     t["ad_missing"] = [d for d in days if d not in covered]
-    t["ad_filled"] = [(a["s"], a["src"]) for a in rows if a["src"] != "대시보드"]
+    t["ad_filled"] = [(a["s"], a["e"], a["src"]) for a in rows if a["src"] != "대시보드"]
     t["natural"] = t["rev"] - t["adrev"] if t["ad_ok"] else None
     t["ad_ratio"] = t["cost"] / t["rev"] * 100 if t["ad_ok"] and t["rev"] else None
     t["ad_share"] = t["adrev"] / t["rev"] * 100 if t["ad_ok"] and t["rev"] else None
@@ -114,6 +151,7 @@ def channel_groups(opt_dicts: list[dict], pairs: list) -> dict:
 
 
 def ad_context(raw: AdRaw | None, cutoff: date, recent_days: int) -> dict:
+    """옵션별 광고비·광고 상태. 일별 raw + 기간 합계 파일(그 기간 안에서는 기간 합계가 우선)."""
     opt_cost: dict = {}
     if raw:
         for d, items in raw.by_day.items():
@@ -121,18 +159,26 @@ def ad_context(raw: AdRaw | None, cutoff: date, recent_days: int) -> dict:
                 continue
             for oid, c, _ in items:
                 opt_cost[(oid, d)] = opt_cost.get((oid, d), 0) + c
-    ad_days = sorted({d for _, d in opt_cost})
-    day_set, recent = set(ad_days), set(ad_days[-recent_days:])
+    periods = [p for p in active_periods(raw) if p.s <= cutoff]
+    dated_days = sorted({d for _, d in opt_cost})
+    period_days = {d for p in periods for d in _days(p.s, min(p.e, cutoff))}
+    day_set = set(dated_days) | period_days
+    all_days = sorted(day_set)
+    recent = set(all_days[-recent_days:])
     by_opt: dict = {}
     for (o, d), c in opt_cost.items():
         if c > 0:
             by_opt.setdefault(o, set()).add(d)
 
     def spend(oid, s, e):
-        return sum(c for (o, d), c in opt_cost.items() if o == oid and s <= d <= e)
+        inside = [p for p in periods if p.s >= s and p.e <= e]
+        covered = {d for p in inside for d in _days(p.s, p.e)}
+        total = sum(p.opt.get(oid, [0, 0])[0] for p in inside)
+        return total + sum(c for (o, d), c in opt_cost.items() if o == oid and s <= d <= e and d not in covered)
 
     def coverage(s, e):
-        return sum(1 for d in ad_days if s <= d <= e), (e - s).days + 1
+        inside = {d for p in periods if p.s >= s and p.e <= e for d in _days(p.s, p.e)}
+        return len(inside | {d for d in dated_days if s <= d <= e}), (e - s).days + 1
 
     def gaps(s, e):
         out = []
@@ -146,19 +192,28 @@ def ad_context(raw: AdRaw | None, cutoff: date, recent_days: int) -> dict:
         return out
 
     def status(oid):
-        if not ad_days:
+        if not all_days:
             return "-"
-        ds = by_opt.get(oid)
-        if not ds:
-            return "미집행"
+        ds = by_opt.get(oid, set())
         if ds & recent:
             return "집행중"
-        last = max(ds)
+        spent_periods = [p for p in periods if p.opt.get(oid, [0])[0] > 0]
+        for p in spent_periods:
+            if set(_days(p.s, min(p.e, cutoff))) & recent:
+                return f"집행(기간합계 {p.s.month}/{p.s.day}~{p.e.month}/{p.e.day})"
+        last_d = max(ds) if ds else None
+        last_p = max(spent_periods, key=lambda p: p.e) if spent_periods else None
+        if last_d is None and last_p is None:
+            return "미집행"
+        if last_p and (last_d is None or last_p.e >= last_d):
+            last, label = last_p.e, f"{last_p.s.month}/{last_p.s.day}~{last_p.e.month}/{last_p.e.day} 집행 후"
+        else:
+            last, label = last_d, f"마지막 {last_d.month}/{last_d.day}"
         if last + timedelta(1) not in day_set:
             return f"확인필요({last.month}/{last.day} 이후 광고 데이터 없음)"
-        return f"중단(마지막 {last.month}/{last.day})"
+        return f"중단({label})"
 
-    return {"has": bool(ad_days), "spend": spend, "coverage": coverage, "gaps": gaps, "status": status,
+    return {"has": bool(all_days), "spend": spend, "coverage": coverage, "gaps": gaps, "status": status,
             "recent": (min(recent), max(recent)) if recent else None}
 
 
@@ -241,6 +296,7 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
         raise ValueError("일별 판매 데이터('기간별 판매량' 시트)가 없습니다.")
     cutoff = s.cutoff or max(d for d, v in daily.items() if v["vis"] > 0)
     daily = {d: v for d, v in daily.items() if d <= cutoff}
+    resolve_periods(raw, daily)
     ad_rows = build_ad_rows(dash, s.manual_ads, raw, cutoff)
 
     months = []
@@ -343,10 +399,25 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
         elif t["ad_missing"]:
             miss = ", ".join(f"{d.month}/{d.day}" for d in t["ad_missing"])
             checks.append(("info", f"{t['short']} 광고 데이터 누락일: {miss} (광고 지표가 소폭 과소)"))
-        for d, src in t["ad_filled"]:
-            checks.append(("info", f"{d.month}/{d.day} 광고 합계는 {src} 값으로 채웠습니다."))
+        for d, e2, src in t["ad_filled"]:
+            rng = f"{d.month}/{d.day}" + (f"~{e2.month}/{e2.day}" if e2 != d else "")
+            checks.append(("info", f"{rng} 광고 합계는 {src} 값을 사용했습니다."))
     if not ad["has"]:
         checks.append(("info", "광고 raw가 없어 급변 옵션의 광고 상태·광고비 열은 비워둡니다."))
+    for p in (raw.periods if raw else []):
+        if not (p.s and p.e):
+            checks.append(("warn", f"'{p.source}'은(는) 날짜 없는 기간 합계 파일인데 기간을 알 수 없어 제외했습니다. 화면에서 기간을 지정하세요."))
+            continue
+        tag = f"'{p.source}' ({p.s.month}/{p.s.day}~{p.e.month}/{p.e.day} 기간 합계, 캠페인 {len(p.campaigns)}개, 광고비 {won(p.cost)})"
+        if not p.use_total:
+            checks.append(("info", f"{tag}는 계정 전체가 아니라고 보고 옵션별 광고비에만 반영했습니다."))
+        if dash:
+            inside = [r for r in dash if r["s"] >= p.s and r["e"] <= p.e]
+            if inside and p.use_total:
+                dsum = sum(r["cost"] for r in inside)
+                gap = (dsum / p.cost - 1) * 100 if p.cost else 0
+                if abs(gap) > 1:
+                    checks.append(("warn", f"{tag}와 대시보드 같은 기간 광고비({won(dsum)})가 {gap:+.1f}% 다릅니다. 광고보고서 값을 사용합니다."))
     checks.extend(("warn", n) for n in ins.notes)
 
     # 주차 추이 · 배너

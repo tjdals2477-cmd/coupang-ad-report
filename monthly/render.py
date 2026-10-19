@@ -60,7 +60,7 @@ def mover_view(ms: dict) -> dict:
                      "dir": "up" if m["diff"] > 0 else "down",
                      "ad_a_t": ad_txt(m["ad_a"]), "ad_b_t": ad_txt(m["ad_b"]),
                      "ad_d": delta(m["ad_b"], m["ad_a"]) if m["ad_a"] else None,
-                     "st_cls": ("st-hit" if m["ad_status"] == "집행중" else
+                     "st_cls": ("st-hit" if m["ad_status"].startswith("집행") else
                                 "st-miss" if m["ad_status"].startswith("중단") else
                                 "st-new" if m["ad_status"].startswith("확인") else "st-none")})
     gap_txt = ", ".join(f"{a.month}/{a.day}" + (f"~{b.month}/{b.day}" if b != a else "") for a, b in ms["gaps"])

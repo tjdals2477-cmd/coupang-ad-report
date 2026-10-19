@@ -133,19 +133,66 @@ def read_insight(data: bytes, name: str, into: InsightData | None = None) -> Ins
     return out
 
 
-# ---------------- 광고 raw (옵션 단위 일별) ----------------
+# ---------------- 광고 raw (옵션 단위) ----------------
+# 광고보고서 xlsm 'raw' 시트, 광고센터 상품 전환 보고서 등 헤더 표기가 조금씩 달라 공백·(원)을 무시하고 찾는다.
+AD_ALIASES = {
+    "date": ("날짜", "일자"),
+    "opt": ("광고집행옵션ID",),
+    "cost": ("광고비", "광고비(원)"),
+    "rev": ("총전환매출액(14일)", "총전환매출액(14일)(원)"),
+    "camp": ("캠페인", "캠페인이름", "캠페인명"),
+}
 
-AD_RAW_COLS = ("날짜", "광고집행 옵션ID", "광고비")
-AD_REV_COLS = ("총 전환매출액(14일)", "총 전환매출액 (14일)(원)")
+
+def _norm(h: str) -> str:
+    return re.sub(r"\s+", "", h)
+
+
+def _find(hdr: list[str], key: str) -> int | None:
+    names = {_norm(a) for a in AD_ALIASES[key]}
+    return next((i for i, h in enumerate(hdr) if _norm(h) in names), None)
+
+
+def period_from_name(name: str) -> tuple | None:
+    """파일명에서 기간 (시작월, 시작일, 종료월, 종료일). 일(day) 0은 '월말'."""
+    m = re.search(r"(?<!\d)(\d{2})(\d{2})\s*[-~]\s*(\d{2})(\d{2})(?!\d)", name)       # 0901-0909
+    if m:
+        return int(m[1]), int(m[2]), int(m[3]), int(m[4])
+    m = re.search(r"(\d{1,2})\s*월\s*(\d{1,2})\s*일?\s*[-~]\s*(?:(\d{1,2})\s*월\s*)?(\d{1,2})\s*일", name)  # 9월16~9월22일
+    if m:
+        return int(m[1]), int(m[2]), int(m[3] or m[1]), int(m[4])
+    mo = _month_from_name(name)
+    return (mo, 1, mo, 0) if mo else None
+
+
+@dataclass
+class AdPeriod:
+    """날짜 없이 기간 합계로 내려받은 광고 파일."""
+    source: str
+    md: tuple | None                               # period_from_name 결과
+    opt: dict = field(default_factory=dict)        # {옵션ID: [광고비, 14일 전환매출]}
+    campaigns: set = field(default_factory=set)
+    s: date | None = None                          # 분석 시 확정 (연도는 판매 데이터에서)
+    e: date | None = None
+    use_total: bool = True                         # 계정 전체 광고 합계로도 사용할지
+
+    @property
+    def cost(self) -> float:
+        return sum(v[0] for v in self.opt.values())
+
+    @property
+    def rev(self) -> float:
+        return sum(v[1] for v in self.opt.values())
 
 
 @dataclass
 class AdRaw:
-    by_day: dict = field(default_factory=dict)   # {date: [(옵션ID, 광고비, 14일 전환매출)]}
+    by_day: dict = field(default_factory=dict)     # {date: [(옵션ID, 광고비, 14일 전환매출)]}
+    periods: list = field(default_factory=list)    # [AdPeriod]
 
 
 def read_ad_raw(data: bytes, name: str, into: AdRaw | None = None) -> AdRaw:
-    """같은 날짜가 여러 파일에 있으면 나중에 읽은 파일이 덮어쓴다 (업로드 순서 = 최신 순으로 올리면 됨)."""
+    """일별 파일: 같은 날짜는 나중에 읽은 파일이 덮어씀. 날짜가 없는 파일: 기간 합계(AdPeriod)로 보관."""
     out = into or AdRaw()
     wb = _open(data)
     sheets = [wb["raw"]] if "raw" in wb.sheetnames else wb.worksheets
@@ -155,19 +202,30 @@ def read_ad_raw(data: bytes, name: str, into: AdRaw | None = None) -> AdRaw:
             hdr = _header(next(it))
         except StopIteration:
             continue
-        if not all(c in hdr for c in AD_RAW_COLS):
+        i_o, i_c = _find(hdr, "opt"), _find(hdr, "cost")
+        if i_o is None or i_c is None:
             continue
-        i_d, i_o, i_c = (hdr.index(c) for c in AD_RAW_COLS)
-        i_r = next((hdr.index(c) for c in AD_REV_COLS if c in hdr), None)
-        rows: dict = {}
+        i_d, i_r, i_k = _find(hdr, "date"), _find(hdr, "rev"), _find(hdr, "camp")
+        dated: dict = {}
+        undated = AdPeriod(source=name, md=period_from_name(name))
         for r in it:
-            d = to_date(r[i_d])
-            if not d:
-                continue
-            rows.setdefault(d, []).append((str(r[i_o]).split(".")[0], num(r[i_c]), num(r[i_r]) if i_r is not None else 0.0))
-        out.by_day.update(rows)
+            oid = str(r[i_o]).split(".")[0].strip() if r[i_o] not in (None, "") else ""
+            cost, rev = num(r[i_c]), (num(r[i_r]) if i_r is not None else 0.0)
+            d = to_date(r[i_d]) if i_d is not None else None
+            if d:
+                dated.setdefault(d, []).append((oid, cost, rev))
+            else:
+                v = undated.opt.setdefault(oid, [0.0, 0.0])
+                v[0] += cost; v[1] += rev
+            if i_k is not None and r[i_k] not in (None, "", "-"):
+                undated.campaigns.add(str(r[i_k]))
+        if dated:
+            out.by_day.update(dated)
+        elif undated.opt:
+            undated.use_total = len(undated.campaigns) >= 2   # 캠페인 1개짜리 파일은 계정 전체가 아님
+            out.periods.append(undated)
         return out
-    raise MonthlyFileError(f"'{name}'에서 광고 raw(날짜·광고집행 옵션ID·광고비 컬럼)를 찾지 못했습니다.")
+    raise MonthlyFileError(f"'{name}'에서 광고 데이터(광고집행 옵션ID·광고비 컬럼)를 찾지 못했습니다.")
 
 
 # ---------------- 광고 주차 대시보드 ----------------
