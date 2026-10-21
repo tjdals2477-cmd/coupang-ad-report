@@ -69,7 +69,7 @@ OPTION_COLS = {"옵션 ID", "옵션명", "판매방식", "매출(원)", "방문�
 class OptionSheet:
     source: str            # "파일명 · 시트명"
     month: int | None
-    rows: dict             # {옵션ID: {name, ch, rev, vis, ord}}
+    rows: dict             # {옵션ID: {name, ch, cat, rev, vis, ord, qty}}
     partial: bool = False  # 시트명에 'TOP'이 있으면 상위 상품만 담긴 시트 (합계 대조·전체 비교 불가)
 
     @property
@@ -113,7 +113,8 @@ def read_insight(data: bytes, name: str, into: InsightData | None = None) -> Ins
                 found = True
         elif OPTION_COLS <= set(hdr):
             ix = {h: hdr.index(h) for h in OPTION_COLS}
-            i_ord = hdr.index("주문") if "주문" in hdr else None
+            opt_ix = lambda h: hdr.index(h) if h in hdr else None
+            i_ord, i_qty, i_cat = opt_ix("주문"), opt_ix("판매량"), opt_ix("카테고리")
             rows = {}
             for r in it:
                 oid = r[ix["옵션 ID"]]
@@ -122,7 +123,9 @@ def read_insight(data: bytes, name: str, into: InsightData | None = None) -> Ins
                 oid = str(oid).split(".")[0].strip()
                 rows[oid] = {"name": str(r[ix["옵션명"]] or ""), "ch": str(r[ix["판매방식"]] or ""),
                              "rev": num(r[ix["매출(원)"]]), "vis": num(r[ix["방문자"]]),
-                             "ord": num(r[i_ord]) if i_ord is not None else 0.0}
+                             "ord": num(r[i_ord]) if i_ord is not None else 0.0,
+                             "qty": num(r[i_qty]) if i_qty is not None else 0.0,
+                             "cat": str(r[i_cat] or "") if i_cat is not None else ""}
             pending_opts.append((ws.title, rows))
             found = True
     for title, rows in pending_opts:
@@ -145,7 +148,18 @@ AD_ALIASES = {
     "cost": ("광고비", "광고비(원)"),
     "rev": ("총전환매출액(14일)", "총전환매출액(14일)(원)"),
     "camp": ("캠페인", "캠페인이름", "캠페인명"),
+    "impr": ("노출수",),
+    "clicks": ("클릭수",),
+    "orders": ("총주문수(14일)",),
+    "name": ("광고집행상품명",),
 }
+CAMP_FIELDS = ("impr", "clicks", "cost", "orders", "rev")   # 캠페인×옵션 집계 값 순서
+
+
+def _add(store: dict, key, vals) -> None:
+    v = store.setdefault(key, [0.0] * len(vals))
+    for i, x in enumerate(vals):
+        v[i] += x
 
 
 def _norm(h: str) -> str:
@@ -175,6 +189,7 @@ class AdPeriod:
     source: str
     md: tuple | None                               # period_from_name 결과
     opt: dict = field(default_factory=dict)        # {옵션ID: [광고비, 14일 전환매출]}
+    camp: dict = field(default_factory=dict)       # {(캠페인, 옵션ID): [노출, 클릭, 광고비, 14일 주문, 14일 전환매출]}
     campaigns: set = field(default_factory=set)
     s: date | None = None                          # 분석 시 확정 (연도는 판매 데이터에서)
     e: date | None = None
@@ -194,6 +209,8 @@ class AdPeriod:
 class AdRaw:
     by_day: dict = field(default_factory=dict)     # {date: [(옵션ID, 광고비, 14일 전환매출)]}
     periods: list = field(default_factory=list)    # [AdPeriod]
+    camp_day: dict = field(default_factory=dict)   # {date: {(캠페인, 옵션ID): [노출, 클릭, 광고비, 주문, 전환매출]}}
+    names: dict = field(default_factory=dict)      # {옵션ID: 광고집행 상품명}
 
 
 def read_ad_raw(data: bytes, name: str, into: AdRaw | None = None) -> AdRaw:
@@ -211,21 +228,31 @@ def read_ad_raw(data: bytes, name: str, into: AdRaw | None = None) -> AdRaw:
         if i_o is None or i_c is None:
             continue
         i_d, i_r, i_k = _find(hdr, "date"), _find(hdr, "rev"), _find(hdr, "camp")
+        i_im, i_cl, i_or, i_nm = _find(hdr, "impr"), _find(hdr, "clicks"), _find(hdr, "orders"), _find(hdr, "name")
+        val = lambda r, i: num(r[i]) if i is not None else 0.0
         dated: dict = {}
+        camp_dated: dict = {}
         undated = AdPeriod(source=name, md=period_from_name(name))
         for r in it:
             oid = str(r[i_o]).split(".")[0].strip() if r[i_o] not in (None, "") else ""
             cost, rev = num(r[i_c]), (num(r[i_r]) if i_r is not None else 0.0)
             d = to_date(r[i_d]) if i_d is not None else None
+            camp = str(r[i_k]) if i_k is not None and r[i_k] not in (None, "") else "-"
+            kpi = (val(r, i_im), val(r, i_cl), cost, val(r, i_or), rev)
+            if i_nm is not None and oid and r[i_nm] not in (None, "", "-"):
+                out.names.setdefault(oid, str(r[i_nm]))
             if d:
                 dated.setdefault(d, []).append((oid, cost, rev))
+                _add(camp_dated.setdefault(d, {}), (camp, oid), kpi)
             else:
                 v = undated.opt.setdefault(oid, [0.0, 0.0])
                 v[0] += cost; v[1] += rev
+                _add(undated.camp, (camp, oid), kpi)
             if i_k is not None and r[i_k] not in (None, "", "-"):
                 undated.campaigns.add(str(r[i_k]))
         if dated:
             out.by_day.update(dated)
+            out.camp_day.update(camp_dated)
         elif undated.opt:
             undated.use_total = len(undated.campaigns) >= 2   # 캠페인 1개짜리 파일은 계정 전체가 아님
             out.periods.append(undated)

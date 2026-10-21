@@ -40,6 +40,40 @@
   .mv-filter{display:flex; gap:8px; flex-wrap:wrap; margin:12px 0 10px;}
   .mv-panel{display:none;} .mv-panel.active{display:block; animation:fadeIn .35s ease;}
   tr[hidden]{display:none;}
+  .pc-card.clickable{cursor:pointer; position:relative;}
+  .pc-card.clickable .more{display:block; margin-top:8px; text-align:center; font-size:11px; font-weight:800; color:var(--indigo);}
+  .pc-card.clickable.open{border-color:var(--indigo); box-shadow:0 0 0 2px var(--indigo-bg), 0 14px 32px rgba(91,79,229,0.16);}
+  .kpi-panel{margin-top:14px; background:var(--card); border:1px solid var(--indigo-light); border-radius:18px; padding:20px 22px 16px; box-shadow:0 10px 30px rgba(91,79,229,0.10); animation:fadeIn .3s ease;}
+  .kpi-panel[hidden]{display:none;}
+  .kpi-panel h3{margin:0 0 4px; font-size:16px; font-weight:800;}
+  .kpi-panel .sub{font-size:12px; color:var(--sub); margin:0 0 10px;}
+  .kpi-panel .close{float:right; border:1px solid var(--border); background:#fff; border-radius:999px; padding:5px 12px; font:700 12px/1 inherit; color:var(--sub); cursor:pointer;}
+  table.dt{width:100%; border-collapse:collapse; font-size:12.5px; min-width:860px;}
+  table.dt th{background:var(--indigo-bg); color:var(--indigo); font-weight:800; padding:8px 10px; text-align:right; white-space:nowrap;}
+  table.dt td{padding:8px 10px; border-bottom:1px solid var(--border); text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums;}
+  table.dt th:first-child, table.dt td:first-child{text-align:left;}
+  table.dt td.nm{white-space:normal; max-width:320px; font-weight:700; line-height:1.4;}
+  table.dt tr.camp{cursor:pointer;} table.dt tr.camp:hover td{background:#F7F6FF;}
+  table.dt tr.camp td:first-child::before{content:'▸ '; color:var(--indigo);}
+  table.dt tr.camp.open td:first-child::before{content:'▾ ';}
+  table.dt tr.item td{background:#FBFBFE; font-size:12px; color:#3a3a55;}
+  table.dt tr.item td:first-child{padding-left:26px; font-weight:600;}
+  table.dt tr.tot td{font-weight:800; background:var(--indigo-bg);}
+  .roas-good{color:var(--good); font-weight:800;} .roas-bad{color:var(--up); font-weight:800;}
+  .bar{display:inline-block; height:8px; border-radius:4px; background:var(--indigo-light); vertical-align:middle;}
+  table.mv tr.mrow{cursor:pointer;} table.mv tr.mrow:hover td{background:#F7F6FF;}
+  table.mv tr.mrow td.name::before{content:'▸ '; color:var(--indigo);}
+  table.mv tr.mrow.open td.name::before{content:'▾ ';}
+  table.mv tr.mdetail td{background:#FBFBFE; padding:10px 14px 14px;}
+  table.mini{border-collapse:collapse; font-size:12px; min-width:520px;}
+  table.mini th{color:var(--sub); font-weight:700; padding:5px 10px; text-align:right; border-bottom:1px solid var(--border);}
+  table.mini td{padding:5px 10px; text-align:right; font-variant-numeric:tabular-nums;}
+  table.mini th:first-child, table.mini td:first-child{text-align:left; font-weight:700;}
+  /* 급변 상품 표(.top5-table) 안에 들어가므로 바깥 표 머리글·정렬 스타일을 덮어쓴다 */
+  table.mv table.mini th{background:transparent; color:var(--sub); font-size:11.5px; text-align:right;}
+  table.mv table.mini td{text-align:right; border-bottom:1px solid var(--border);}
+  table.mv table.mini tr:last-child td{border-bottom:none;}
+  table.mv table.mini th:first-child, table.mv table.mini td:first-child{text-align:left;}
   .defs{display:grid; grid-template-columns:repeat(2,1fr); gap:8px 20px; font-size:12px; color:var(--sub); margin:0; padding:0; list-style:none;}
   .defs b{color:var(--text);}
   @media (max-width:900px){ .two-col{grid-template-columns:1fr;} .defs{grid-template-columns:1fr;} }
@@ -62,7 +96,8 @@
     </div>
     <div class="pc-grid">
       {%- for k in kpis %}
-      <div class="pc-card">
+      {%- set open = 'cost' if (k.label == '광고비' and camp_months) else ('rev' if (k.label == '총매출' and cats) else '') %}
+      <div class="pc-card{% if open %} clickable{% endif %}"{% if open %} data-open="{{ open }}" role="button" tabindex="0"{% endif %}>
         <div class="pc-label">{{ k.label }}</div>
         {%- for r in k.rows %}
         <div class="pc-row {{ r.cls }}">
@@ -72,9 +107,82 @@
         {%- endfor %}
         {{ chg(k.delta) }}
         {%- if k.how %}<div class="pc-diff">{{ k.how }}</div>{% endif %}
+        {%- if open == 'cost' %}<span class="more">캠페인별 보기 ▾</span>{% elif open == 'rev' %}<span class="more">카테고리별 보기 ▾</span>{% endif %}
       </div>
       {%- endfor %}
     </div>
+
+    {%- if camp_months %}
+    <div class="kpi-panel" data-panel="cost" hidden>
+      <button type="button" class="close" data-close>닫기 ✕</button>
+      <h3>광고비 상세 — 캠페인별 KPI</h3>
+      <p class="sub">캠페인 행을 누르면 그 캠페인에서 광고한 품목(광고비 순 TOP 10)이 펼쳐집니다. ROAS·전환율은 광고센터 14일 기준.</p>
+      <div class="tab-bar" style="margin-top:4px">
+        {%- for cm in camp_months %}<button type="button" class="tab-btn{% if loop.last %} active{% endif %}" data-cm="{{ cm.id }}">{{ cm.label }}</button>{% endfor %}
+      </div>
+      {%- for cm in camp_months %}
+      <div class="cm-panel" data-cm-panel="{{ cm.id }}"{% if not loop.last %} hidden{% endif %}>
+        <p class="sub" style="margin-top:10px">출처: {{ cm.source }} · 데이터 {{ cm.covered }}/{{ cm.days }}일
+          {%- if cm.month_cost and (cm.total.cost - cm.month_cost)|abs > cm.month_cost * 0.01 %} · 카드의 월 광고비({{ '{:,.0f}'.format(cm.month_cost) }}원)와 범위가 달라 합계가 다를 수 있음{% endif %}</p>
+        <div class="table-wrap">
+        <table class="dt">
+          <tr><th>캠페인 / 품목</th><th>광고비</th><th>광고매출</th><th>ROAS</th><th>노출</th><th>클릭</th><th>CTR</th><th>CPC</th><th>주문</th><th>전환율</th></tr>
+          {%- for c in cm.campaigns %}
+          {%- set ci = cm.id ~ '_' ~ loop.index %}
+          <tr class="camp" data-camp="{{ ci }}">
+            <td class="nm">{{ c.name }}</td><td>{{ '{:,.0f}'.format(c.cost) }}</td><td>{{ '{:,.0f}'.format(c.rev) }}</td>
+            <td class="{{ 'roas-good' if c.roas >= 500 else ('roas-bad' if c.roas < 300 else '') }}">{{ '{:,.0f}'.format(c.roas) }}%</td>
+            <td>{{ '{:,.0f}'.format(c.impr) }}</td><td>{{ '{:,.0f}'.format(c.clicks) }}</td><td>{{ '%.2f'|format(c.ctr) }}%</td>
+            <td>{{ '{:,.0f}'.format(c.cpc) }}</td><td>{{ '{:,.0f}'.format(c.orders) }}</td><td>{{ '%.2f'|format(c.cvr) }}%</td>
+          </tr>
+          {%- for it in c['items'] %}
+          <tr class="item" data-of="{{ ci }}" hidden>
+            <td class="nm">{{ it.name }}</td><td>{{ '{:,.0f}'.format(it.cost) }}</td><td>{{ '{:,.0f}'.format(it.rev) }}</td>
+            <td>{{ '{:,.0f}'.format(it.roas) }}%</td><td>{{ '{:,.0f}'.format(it.impr) }}</td><td>{{ '{:,.0f}'.format(it.clicks) }}</td>
+            <td>{{ '%.2f'|format(it.ctr) }}%</td><td>{{ '{:,.0f}'.format(it.cpc) }}</td><td>{{ '{:,.0f}'.format(it.orders) }}</td><td>{{ '%.2f'|format(it.cvr) }}%</td>
+          </tr>
+          {%- endfor %}
+          {%- endfor %}
+          <tr class="tot"><td>합계</td><td>{{ '{:,.0f}'.format(cm.total.cost) }}</td><td>{{ '{:,.0f}'.format(cm.total.rev) }}</td><td>{{ '{:,.0f}'.format(cm.total.roas) }}%</td>
+            <td>{{ '{:,.0f}'.format(cm.total.impr) }}</td><td>{{ '{:,.0f}'.format(cm.total.clicks) }}</td><td>{{ '%.2f'|format(cm.total.ctr) }}%</td>
+            <td>{{ '{:,.0f}'.format(cm.total.cpc) }}</td><td>{{ '{:,.0f}'.format(cm.total.orders) }}</td><td>{{ '%.2f'|format(cm.total.cvr) }}%</td></tr>
+        </table>
+        </div>
+      </div>
+      {%- endfor %}
+    </div>
+    {%- endif %}
+
+    {%- if cats %}
+    <div class="kpi-panel" data-panel="rev" hidden>
+      <button type="button" class="close" data-close>닫기 ✕</button>
+      <h3>총매출 상세 — 카테고리별 매출 흐름</h3>
+      <p class="sub">품목군은 상품명 키워드로 묶은 분류입니다.{% if cats.top_only %} 상품별 데이터가 월별 TOP 10 상품뿐이라 그 범위 안의 흐름입니다.{% endif %} 진행 중인 달은 월환산 값.</p>
+      <div class="tab-bar" style="margin-top:4px">
+        <button type="button" class="tab-btn active" data-cat="group">품목군(상품명 기준)</button>
+        <button type="button" class="tab-btn" data-cat="cat">쿠팡 카테고리</button>
+      </div>
+      {%- for mode in ('group', 'cat') %}
+      {%- set cv = cats[mode] %}
+      <div class="table-wrap" data-cat-panel="{{ mode }}" style="margin-top:10px"{% if mode != 'group' %} hidden{% endif %}>
+        <table class="dt">
+          <tr><th>{{ '품목군' if mode == 'group' else '카테고리' }}</th>
+            {%- for lb in cats.labels %}<th>{{ lb }} 매출 (비중)</th>{% endfor %}<th>판매량 {{ cats.labels[-1] }}</th><th>증감</th><th>비중</th></tr>
+          {%- for r in cv.rows %}
+          <tr>
+            <td class="nm">{{ r.name }}</td>
+            {%- for i in range(cats.labels|length) %}<td>{{ '{:,.0f}'.format(r.rev[i]) }} <span style="color:var(--sub)">({{ '%.0f'|format(r.share[i]) }}%)</span></td>{% endfor %}
+            <td>{{ '{:,.0f}'.format(r.qty[-1]) }}</td>
+            <td>{% if r.delta %}<span class="d-{{ r.delta.dir }}">{{ r.delta.text }}</span>{% else %}-{% endif %}</td>
+            <td><span class="bar" style="width:{{ '%.0f'|format([r.share[-1], 100]|min * 1.2) }}px"></span></td>
+          </tr>
+          {%- endfor %}
+          <tr class="tot"><td>합계</td>{% for t in cv.total %}<td>{{ '{:,.0f}'.format(t) }}</td>{% endfor %}<td></td><td></td><td></td></tr>
+        </table>
+      </div>
+      {%- endfor %}
+    </div>
+    {%- endif %}
     <div class="focus-banner">
       <div class="icon">🎯</div>
       <div class="txt">
@@ -198,7 +306,7 @@
         <table class="top5-table mv">
           <tr><th>상품(옵션)</th><th>판매방식</th><th>{{ mv.a_label }}</th><th>{{ mv.b_label }}</th><th>증감</th><th>광고</th><th>광고비 {{ mv.a_label }}→{{ mv.b_label.split(' ')[0] }}</th><th style="text-align:left">이슈(자동)</th></tr>
           {%- for r in mv.rows %}
-          <tr class="{{ r.dir }}" data-dir="{{ r.dir }}" data-shift="{{ '1' if r.shift else '' }}">
+          <tr class="{{ r.dir }} mrow" data-dir="{{ r.dir }}" data-shift="{{ '1' if r.shift else '' }}" data-mrow="{{ mv.id }}_{{ loop.index }}">
             <td class="name">{{ r.name }}<span class="sub">{{ r.oid }}</span></td>
             <td>{{ r.ch }}</td>
             <td>{{ '{:,.0f}'.format(r.a) }}</td>
@@ -208,6 +316,15 @@
             <td>{{ r.ad_a_t }} → {{ r.ad_b_t }}{% if r.ad_d %}<span class="sub">{{ r.ad_d.text }}</span>{% endif %}</td>
             <td class="note">{% if r.note %}<b>{{ r.note }}</b>{% endif %}</td>
           </tr>
+          <tr class="mdetail" data-mdetail="{{ mv.id }}_{{ loop.index }}" hidden><td colspan="8">
+            <table class="mini">
+              <tr><th>월</th><th>매출</th><th>판매수량</th><th>주문</th><th>방문자</th><th>개당 매출</th><th>광고비</th></tr>
+              {%- for x in r.series %}
+              <tr><td>{{ x.label }}</td><td>{{ '{:,.0f}'.format(x.rev) }}</td><td><b>{{ '{:,.0f}'.format(x.qty) }}</b></td><td>{{ '{:,.0f}'.format(x.ord) }}</td>
+                <td>{{ '{:,.0f}'.format(x.vis) }}</td><td>{{ '{:,.0f}'.format(x.unit) if x.unit else '-' }}</td><td>{{ '{:,.0f}'.format(x.ad) if x.ad is not none else '-' }}</td></tr>
+              {%- endfor %}
+            </table>
+          </td></tr>
           {%- endfor %}
         </table>
       </div>
@@ -256,10 +373,54 @@
         panel.querySelectorAll('[data-f]').forEach(function(x){ x.classList.toggle('active', x === b); });
         panel.querySelectorAll('tr[data-dir]').forEach(function(tr){
           tr.hidden = !(f === 'all' || (f === 'shift' ? tr.dataset.shift : tr.dataset.dir === f));
+          var det = panel.querySelector('[data-mdetail="' + tr.dataset.mrow + '"]');
+          if (det && tr.hidden) { det.hidden = true; tr.classList.remove('open'); }
         });
       });
     });
   });
+  // ---- 급변 상품 행 → 품목 상세 ----
+  document.querySelectorAll('tr[data-mrow]').forEach(function(tr){
+    tr.addEventListener('click', function(){
+      if (document.body.classList.contains('editing')) return;
+      var det = document.querySelector('[data-mdetail="' + tr.dataset.mrow + '"]');
+      if (!det) return;
+      det.hidden = !det.hidden; tr.classList.toggle('open', !det.hidden);
+    });
+  });
+  // ---- KPI 카드 → 상세 패널 ----
+  function closePanels(){ document.querySelectorAll('.kpi-panel').forEach(function(p){ p.hidden = true; });
+    document.querySelectorAll('.pc-card.clickable').forEach(function(c){ c.classList.remove('open'); }); }
+  document.querySelectorAll('.pc-card.clickable').forEach(function(card){
+    function toggle(){
+      if (document.body.classList.contains('editing')) return;
+      var p = document.querySelector('[data-panel="' + card.dataset.open + '"]'), wasOpen = p && !p.hidden;
+      closePanels();
+      if (p && !wasOpen){ p.hidden = false; card.classList.add('open'); p.scrollIntoView({behavior:'smooth', block:'nearest'}); }
+    }
+    card.addEventListener('click', toggle);
+    card.addEventListener('keydown', function(e){ if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); toggle(); } });
+  });
+  document.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', closePanels); });
+  document.querySelectorAll('[data-cm]').forEach(function(b){
+    b.addEventListener('click', function(){
+      document.querySelectorAll('[data-cm]').forEach(function(x){ x.classList.toggle('active', x === b); });
+      document.querySelectorAll('[data-cm-panel]').forEach(function(p){ p.hidden = p.dataset.cmPanel !== b.dataset.cm; });
+    });
+  });
+  document.querySelectorAll('tr.camp').forEach(function(tr){
+    tr.addEventListener('click', function(){
+      var open = !tr.classList.contains('open'); tr.classList.toggle('open', open);
+      document.querySelectorAll('[data-of="' + tr.dataset.camp + '"]').forEach(function(x){ x.hidden = !open; });
+    });
+  });
+  document.querySelectorAll('[data-cat]').forEach(function(b){
+    b.addEventListener('click', function(){
+      document.querySelectorAll('[data-cat]').forEach(function(x){ x.classList.toggle('active', x === b); });
+      document.querySelectorAll('[data-cat-panel]').forEach(function(p){ p.hidden = p.dataset.catPanel !== b.dataset.cat; });
+    });
+  });
+
   // ---- 스크롤 리빌 ----
   if (!('IntersectionObserver' in window)) { document.querySelectorAll('.section').forEach(function(s){ s.classList.add('reveal'); }); return; }
   var io = new IntersectionObserver(function(entries){

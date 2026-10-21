@@ -234,6 +234,47 @@ class MonthlyTest(unittest.TestCase):
         mv = ctx["movers"][1]["rows"][0]
         self.assertAlmostEqual(mv["b"], 3_100_000)
 
+    # ---------- KPI 카드 상세 · 품목 상세 ----------
+    def test_campaign_breakdown_from_period_file(self):
+        hdr = ["날짜", "캠페인", "광고집행 상품명", "광고집행 옵션ID", "노출수", "클릭수", "광고비", "총 주문수(14일)", "총 전환매출액(14일)"]
+        body = [[None, "AI", "상품A,{\"x\":1}", 11, 1000, 100, 50_000, 5, 300_000],
+                [None, "AI", "상품B", 12, 500, 50, 10_000, 0, 0],
+                [None, "수동", "상품A", 11, 200, 10, 20_000, 1, 40_000]]
+        raw = read_ad_raw(xlsx({"raw": [hdr] + body}), "A_9월 광고 보고서.xlsm", AdRaw())
+        ctx = build_context(self.ins, raw, None, self.s)
+        cm = {c["label"]: c for c in ctx["camp_months"]}["9월"]
+        ai = cm["campaigns"][0]
+        self.assertEqual((ai["name"], ai["cost"], ai["clicks"]), ("AI", 60_000, 150))
+        self.assertAlmostEqual(ai["roas"], 500.0)
+        self.assertAlmostEqual(ai["cvr"], 5 / 150 * 100)
+        self.assertEqual(ai["items"][0]["name"], "상품A")                    # {...} 옵션 표기 제거
+        self.assertEqual(cm["total"]["cost"], 80_000)
+        self.assertEqual(cm["covered"], 30)
+
+    def test_category_trend_and_item_series(self):
+        from monthly.analysis import item_group
+        self.assertEqual(item_group("안트 국내생산 LED 현관 센서등 15W 원형 천장등"), "센서등")
+        self.assertEqual(item_group("고네오 1로 2구 클래식 스위치"), "스위치·콘센트")
+        self.assertEqual(item_group("LED 십자등 60W 형광등 천장등"), "십자·일자·트윈등")
+        ctx = build_context(self.ins, self.raw, None, self.s)
+        cats = ctx["cats"]
+        self.assertEqual(len(cats["labels"]), 3)
+        self.assertIn("월환산", cats["labels"][-1])
+        g = {r["name"]: r for r in cats["group"]["rows"]}
+        self.assertIn("평판·엣지등", g)
+        self.assertAlmostEqual(sum(cats["group"]["total"][:1]), 31_000_000)
+        row = ctx["movers"][0]["rows"][0]
+        self.assertEqual([x["label"] for x in row["series"]], ["8월", "9월", "10월(1~10일)"])
+        self.assertIn("qty", row["series"][0])
+
+    def test_render_has_detail_panels(self):
+        ctx = build_context(self.ins, self.raw, None, self.s)
+        html = render_monthly(ctx)
+        self.assertIn('data-panel="rev"', html)
+        self.assertIn('data-panel="cost"', html)
+        self.assertIn("data-mdetail=", html)
+        self.assertIn("판매수량", html)
+
     def test_render_and_merge(self):
         ctx = build_context(self.ins, self.raw, None, self.s)
         html = render_monthly(ctx)

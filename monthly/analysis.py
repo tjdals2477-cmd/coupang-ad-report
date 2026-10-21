@@ -8,7 +8,9 @@ from datetime import date, timedelta
 
 from core.analysis import delta, pct, won
 
-from .data import AdRaw, InsightData, OptionSheet
+from core.data import clean_product_name
+
+from .data import CAMP_FIELDS, AdRaw, InsightData, OptionSheet, _add
 
 
 @dataclass
@@ -270,6 +272,135 @@ def movers(a: dict, b: dict, scale_b: float, window: tuple, group: dict, ad: dic
     return sorted(out, key=lambda x: x["diff"])
 
 
+# ---------------- 캠페인별 광고 (광고비 카드 상세) ----------------
+
+def _rates(v: dict) -> dict:
+    c, cl, im = v["cost"], v["clicks"], v["impr"]
+    return {**v, "roas": v["rev"] / c * 100 if c else 0.0, "ctr": cl / im * 100 if im else 0.0,
+            "cpc": c / cl if cl else 0.0, "cvr": v["orders"] / cl * 100 if cl else 0.0}
+
+
+def campaign_breakdown(raw: AdRaw | None, s: date, e: date, top_n: int = 10) -> dict | None:
+    """기간 [s, e]의 캠페인별 KPI와 캠페인 안 광고 품목 TOP N. 기간 합계 파일이 그 기간을 덮으면 우선."""
+    if not raw:
+        return None
+    periods = [p for p in active_periods(raw) if p.s >= s and p.e <= e and p.camp]
+    if any(p.use_total for p in periods):
+        periods = [p for p in periods if p.use_total]
+    covered = {d for p in periods for d in _days(p.s, p.e)}
+    agg: dict = {}
+    for p in periods:
+        for k, v in p.camp.items():
+            _add(agg, k, v)
+    dated = set()
+    for d, items in raw.camp_day.items():
+        if s <= d <= e and d not in covered:
+            dated.add(d)
+            for k, v in items.items():
+                _add(agg, k, v)
+    if not agg:
+        return None
+    camps: dict = {}
+    for (camp, oid), v in agg.items():
+        row = dict(zip(CAMP_FIELDS, v))
+        c = camps.setdefault(camp, {"name": camp, "items": [], **{f: 0.0 for f in CAMP_FIELDS}})
+        for f in CAMP_FIELDS:
+            c[f] += row[f]
+        if oid and oid != "0" and (row["cost"] or row["rev"]):
+            c["items"].append(_rates({"oid": oid, "name": clean_product_name(raw.names.get(oid, oid), 70), **row}))
+    out = []
+    for c in camps.values():
+        if not (c["cost"] or c["rev"]):
+            continue
+        c["items"] = sorted(c["items"], key=lambda x: -x["cost"])[:top_n]
+        out.append(_rates(c))
+    out.sort(key=lambda x: -x["cost"])
+    total = _rates({f: sum(c[f] for c in out) for f in CAMP_FIELDS})
+    src = ("광고보고서(기간 합계)" if periods and not dated else
+           "광고 raw(일별)" if dated and not periods else "광고보고서 + 일별 raw")
+    return {"campaigns": out, "total": total, "covered": len(covered | dated), "days": (e - s).days + 1, "source": src}
+
+
+# ---------------- 카테고리 · 품목군 (총매출 카드 상세) ----------------
+# 상품명 키워드 → 품목군 (위에서부터 먼저 걸리는 것). 조명 상품 기준, 필요하면 여기만 고치면 됨.
+ITEM_GROUPS = [
+    ("스위치·콘센트", ("스위치", "콘센트")),
+    ("실링팬", ("실링팬", "천장선풍기")),
+    ("투광등", ("투광",)),
+    ("보안등·콘램프", ("보안등", "콘램프", "가로등")),
+    ("센서등", ("센서",)),
+    ("주차장·창고등", ("주차장", "레이스웨이", "창고등")),
+    ("평판·엣지등", ("평판", "엣지")),
+    ("십자·일자·트윈등", ("십자", "일자등", "트윈")),
+    ("기판·모듈 리폼", ("기판", "모듈", "리폼")),
+    ("욕실등", ("욕실", "화장실")),
+    ("방등·거실·주방등", ("방등", "거실등", "주방등", "식탁등", "천장등")),
+    ("다운라이트·매입등", ("다운라이트", "매입")),
+    ("레일·스포트", ("레일", "스포트", "트랙")),
+    ("벽등", ("벽등", "벽부", "벽조명")),
+    ("전구·램프", ("전구", "램프", "par30", "mr16", "할로겐", "크립톤", "장식등", "e26", "e39", "e17")),
+    ("펜던트", ("펜던트",)),
+    ("간접·T5", ("t5", "간접")),
+]
+
+
+def item_group(name: str) -> str:
+    n = re.sub(r"전구색|주광색|주백색|색온도", "", name.lower())  # 색상 표기('전구색')가 '전구'로 잡히지 않게
+    for g, kws in ITEM_GROUPS:
+        if any(k in n for k in kws):
+            return g
+    return "기타"
+
+
+def category_trend(months: list[dict], option_by_month: dict, scale_of, top_n: int = 12) -> dict | None:
+    """월별 품목군·쿠팡 카테고리 매출/판매량. 진행 중인 달은 월환산."""
+    ms = [t for t in months if t["m"] in option_by_month]
+    if not ms:
+        return None
+    out = {}
+    for mode, keyf in (("group", lambda r: item_group(r["name"])), ("cat", lambda r: r.get("cat") or "미분류")):
+        agg: dict = {}
+        for t in ms:
+            sc = scale_of(t)
+            for r in option_by_month[t["m"]][0].rows.values():
+                v = agg.setdefault(keyf(r), {}).setdefault(t["m"], [0.0, 0.0])
+                v[0] += r["rev"] * sc
+                v[1] += r.get("qty", 0) * sc
+        tot = {t["m"]: sum(g.get(t["m"], [0, 0])[0] for g in agg.values()) for t in ms}
+        rows = []
+        for name, g in agg.items():
+            vals = [g.get(t["m"], [0.0, 0.0]) for t in ms]
+            last, prev = vals[-1][0], (vals[-2][0] if len(vals) >= 2 else None)
+            rows.append({"name": name, "rev": [v[0] for v in vals], "qty": [v[1] for v in vals],
+                         "share": [v[0] / tot[t["m"]] * 100 if tot[t["m"]] else 0 for v, t in zip(vals, ms)],
+                         "delta": delta(last, prev) if prev else None})
+        rows.sort(key=lambda r: -r["rev"][-1])
+        if len(rows) > top_n:  # 나머지는 '그 외'로 합침
+            rest = rows[top_n:]
+            rows = rows[:top_n] + [{"name": f"그 외 {len(rest)}개",
+                                    "rev": [sum(r["rev"][i] for r in rest) for i in range(len(ms))],
+                                    "qty": [sum(r["qty"][i] for r in rest) for i in range(len(ms))],
+                                    "share": [sum(r["share"][i] for r in rest) for i in range(len(ms))], "delta": None}]
+        out[mode] = {"rows": rows, "total": [tot[t["m"]] for t in ms]}
+    out["labels"] = [t["short"] + (" 월환산" if t["partial"] else "") for t in ms]
+    out["top_only"] = any(option_by_month[t["m"]][0].partial for t in ms)
+    return out
+
+
+def item_series(oid: str, months: list[dict], option_by_month: dict, ad: dict) -> list[dict]:
+    """급변 품목 상세: 월별 실제 매출·판매량·주문·방문자·광고비 (진행 중인 달은 환산 없이 실제값)."""
+    out = []
+    for t in months:
+        if t["m"] not in option_by_month:
+            continue
+        r = option_by_month[t["m"]][0].rows.get(oid, {})
+        rev, qty = r.get("rev", 0.0), r.get("qty", 0.0)
+        out.append({"label": t["label"], "rev": rev, "qty": qty, "ord": r.get("ord", 0.0), "vis": r.get("vis", 0.0),
+                    "unit": rev / qty if qty else None,
+                    "ad": ad["spend"](oid, t["s"], t["e"]) if ad["has"] else None})
+    return out
+
+
 # ---------------- 주차 추이 ----------------
 
 def weekly(daily: dict, start: date, cutoff: date, max_weeks: int = 8) -> list[dict]:
@@ -401,6 +532,8 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
         pa, pb = (ta["s"], ta["e"]), (tb["s"], tb["e"])
         mv = movers(option_by_month[ta["m"]][0].rows, option_by_month[tb["m"]][0].rows, scale_of(tb),
                     window, group, ad, pa, pb, s)
+        for row in mv:
+            row["series"] = item_series(row["oid"], months, option_by_month, ad)
         ca, cb = ad["coverage"](*pa) if ad["has"] else (0, 0), ad["coverage"](*pb) if ad["has"] else (0, 0)
         mover_sets.append({"id": f"mv{ta['m']}_{tb['m']}", "title": f"{ta['short']} → {tb['short']}",
                            "a_label": ta["short"], "b_label": tb["short"] + (" 월환산" if tb["partial"] else ""),
@@ -441,6 +574,14 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
                     checks.append(("warn", f"{tag}와 대시보드 같은 기간 광고비({won(dsum)})가 {gap:+.1f}% 다릅니다. 광고보고서 값을 사용합니다."))
     checks.extend(("warn", n) for n in ins.notes)
 
+    # KPI 카드 상세: 캠페인별 광고 · 카테고리별 매출
+    camp_months = []
+    for t in months:
+        cb_ = campaign_breakdown(raw, t["s"], t["e"])
+        if cb_:
+            camp_months.append({"label": t["label"], "id": f"c{t['m']}", "month_cost": t["cost"] if t["ad_ok"] else None, **cb_})
+    cats = category_trend(months, option_by_month, scale_of)
+
     # 주차 추이 · 배너
     weeks = weekly(daily, months[0]["s"] if len(months) < 3 else months[-2]["s"], cutoff)
     full = [w for w in weeks if not w["partial"]]
@@ -451,7 +592,7 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
             "kpis": kpis, "weeks": weeks, "trend_word": word,
             "headline": s.headline or headline, "headline_sub": s.headline_sub or sub,
             "auto_headline": headline, "auto_headline_sub": sub,
-            "movers": mover_sets, "ad": ad, "checks": checks,
+            "movers": mover_sets, "ad": ad, "checks": checks, "camp_months": camp_months, "cats": cats,
             "period_label": f"{months[0]['y']}년 {months[0]['m']}월~{last['m']}월"
                             + (f" ({last['m']}/{last['e'].day}까지)" if last["partial"] else "")}
 
