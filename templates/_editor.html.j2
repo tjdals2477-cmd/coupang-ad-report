@@ -115,6 +115,10 @@
     root.querySelectorAll('.goal-bar-fill').forEach(function(e){ e.style.removeProperty('width'); });
     root.querySelectorAll('[data-edit-banner]').forEach(function(e){ e.remove(); });
     root.querySelectorAll('.trend-tip').forEach(function(e){ e.hidden = true; e.innerHTML = ''; });
+    root.querySelectorAll('.camp-card.expanded').forEach(function(c){  // 펼친 비교 카드는 접은 상태로 저장
+      c.classList.remove('expanded'); c.setAttribute('aria-expanded', 'false');
+      c.querySelector('.camp-face').hidden = false; c.querySelector('.camp-compare').hidden = true;
+    });
     root.querySelectorAll('.hit.on').forEach(function(e){ e.classList.remove('on'); });
     var body = root.querySelector('body');
     body.classList.remove('editing');

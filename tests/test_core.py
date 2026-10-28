@@ -171,6 +171,14 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(short_won(120_000_000), "1.2억")
         self.assertEqual(short_won(100_000_000), "1억")
 
+    def test_campaign_card_compare_only_when_in_previous_month(self):
+        cards = {c["id"]: c for c in build_context(PREV, CUR, Settings(account="t"))["campaigns"]}
+        self.assertIsNone(cards["9"]["compare"])          # 신규 캠페인 → 비교 없음
+        cmp1 = cards["1"]["compare"]
+        self.assertEqual(cmp1["prev"]["cost"], 100_000)
+        self.assertEqual(cmp1["rows"][0]["delta"]["text"], "▲ 75.0%")   # 100,000 → 175,000
+        self.assertTrue(cards["3"]["compare"]["renamed"])  # 이름이 바뀌어도 ID로 매칭
+
     def test_total_sales_missing_shows_pending(self):
         ctx = build_context(PREV, CUR, Settings(account="t"))
         sales = ctx["kpis"][1]
@@ -237,6 +245,10 @@ class RenderTests(unittest.TestCase):
         html = render_report(ctx)
         self.assertIn('class="trend-card"', html)
         self.assertEqual(html.count('class="hit"'), 2)
+
+    def test_campaign_compare_markup(self):
+        self.assertEqual(self.html.count("data-camp-toggle role"), 2)      # 캠페인 1·3만 클릭 가능
+        self.assertEqual(self.html.count('class="camp-compare" hidden'), 2)
 
     def test_report_has_editor(self):
         self.assertIn("data-edit-kit", self.html)

@@ -193,11 +193,13 @@
     </div>
     <div class="camp-grid">
       {%- for c in campaigns %}
-      <div class="camp-card">
+      <div class="camp-card{% if c.compare %} has-compare{% endif %}"{% if c.compare %} data-camp-toggle role="button" tabindex="0" aria-expanded="false" title="클릭하면 {{ s.prev_label }} 성과와 비교합니다"{% endif %}>
+        <div class="camp-face">
         {%- if c.achieve is none %}<span class="camp-status st-none">목표 미입력</span>
         {%- elif c.hit %}<span class="camp-status st-hit">목표 달성</span>
         {%- else %}<span class="camp-status st-miss">목표 미달</span>{% endif %}
         {%- if c.is_new %}<span class="camp-status st-new">신규</span>{% endif %}
+        {%- if c.compare %}<span class="camp-status st-cmp">↔ {{ s.prev_label }} 비교</span>{% endif %}
         <p class="camp-title">{{ c.name }}</p>
         <div class="camp-meta"><span>목표 ROAS</span><b{% if not c.target %} class="pending"{% endif %}>{{ c.target or '확인 필요' }}</b></div>
         <div class="camp-meta"><span>일 예산</span><b{% if not c.budget %} class="pending"{% endif %}>{{ c.budget or '확인 필요' }}</b></div>
@@ -209,6 +211,17 @@
         <div class="goal-bar-wrap">
           <div class="goal-bar-label"><span>목표 달성률</span><span>{{ '%.1f'|format(c.achieve) }}%</span></div>
           <div class="goal-bar-track"><div class="goal-bar-fill {{ 'hit' if c.hit else 'miss' }}" data-fill="{{ '%.1f'|format(c.fill) }}"></div></div>
+        </div>
+        {%- endif %}
+        </div>
+        {%- if c.compare %}
+        <div class="camp-compare" hidden>
+          <div class="camp-compare-head"><b>{{ c.name }} · {{ s.prev_label }} vs {{ s.cur_label }}</b><span>✕ 닫기</span></div>
+          <div class="compare-grid">
+            {{ comp_card('prev', '📅 ' ~ s.prev_label, c.compare.prev.name, s.prev_label ~ ' 실적', c.compare.rows) }}
+            {{ comp_card('cur', '📅 ' ~ s.cur_label, c.compare.cur.name, s.cur_label ~ ' 실적', c.compare.rows) }}
+          </div>
+          {%- if c.compare.renamed %}<div class="note">ℹ️ 캠페인명이 변경되었습니다: '{{ c.compare.prev.name }}' → '{{ c.compare.cur.name }}' (동일 캠페인 ID)</div>{% endif %}
         </div>
         {%- endif %}
       </div>
@@ -297,6 +310,23 @@
     function hide(){ tip.hidden = true; hits.forEach(function(h){ h.classList.remove('on'); }); }
     hits.forEach(function(h){ h.addEventListener('mouseenter', function(){ show(h); }); h.addEventListener('click', function(){ show(h); }); });
     plot.addEventListener('mouseleave', hide);
+  });
+
+  // ---- ⑤ 캠페인 카드: 클릭하면 전월 동일 캠페인과 비교 ----
+  function toggleCamp(card){
+    if (document.body.classList.contains('editing')) return;  // 편집 중에는 글자 수정이 우선
+    var open = !card.classList.contains('expanded');
+    card.classList.toggle('expanded', open);
+    card.setAttribute('aria-expanded', String(open));
+    card.querySelector('.camp-face').hidden = open;
+    card.querySelector('.camp-compare').hidden = !open;
+    if (open && card.scrollIntoView) card.scrollIntoView({block:'nearest', behavior:'smooth'});
+  }
+  document.querySelectorAll('[data-camp-toggle]').forEach(function(card){
+    card.addEventListener('click', function(){ toggleCamp(card); });
+    card.addEventListener('keydown', function(e){
+      if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); toggleCamp(card); }
+    });
   });
 
   // ---- 숫자 카운트업 ----

@@ -363,6 +363,12 @@ def campaign_cards(df: pd.DataFrame, prev_c: pd.DataFrame, cur_c: pd.DataFrame, 
         target = float(target) if target not in (None, "") and float(target) > 0 else None
         budget = float(budget) if budget not in (None, "") and float(budget) > 0 else None
         achieve = r["roas"] / target * 100 if target else None
+        # 전월에도 집행된 동일 캠페인(ID 기준)이면 클릭 시 보여줄 비교 카드 데이터
+        compare = None
+        same = prev_c[(prev_c["id"] == r["id"]) & (prev_c["cost"] > 0)]
+        if not same.empty:
+            pv, cv = _camp_dict(same.iloc[0]), _camp_dict(r)
+            compare = {"prev": pv, "cur": cv, "rows": _metric_rows(pv, cv), "renamed": pv["name"] != cv["name"]}
         cards.append({
             "idx": i, "id": str(r["id"]), "name": str(r["name"]),
             "is_new": str(r["id"]) not in prev_ids,
@@ -373,6 +379,7 @@ def campaign_cards(df: pd.DataFrame, prev_c: pd.DataFrame, cur_c: pd.DataFrame, 
             "achieve": achieve, "hit": achieve is not None and achieve >= 100,
             "fill": min(achieve, 100) if achieve is not None else 0,
             "top": _top_products(df, str(r["id"]), s),
+            "compare": compare,
         })
     return cards
 

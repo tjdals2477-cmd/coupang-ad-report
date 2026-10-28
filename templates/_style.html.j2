@@ -108,6 +108,15 @@
   .camp-title{font-size:14.5px; font-weight:800; margin:0 0 10px; word-break:keep-all; line-height:1.4;}
   .camp-meta{font-size:12px; color:var(--sub); display:flex; justify-content:space-between; align-items:center; gap:8px; padding:4px 0;}
   .camp-meta b{color:var(--text); font-weight:700; white-space:nowrap; font-variant-numeric:tabular-nums;}
+  .st-cmp{background:var(--indigo-bg); color:var(--indigo);}
+  .camp-card.has-compare{cursor:pointer;}
+  .camp-card.has-compare:focus-visible{outline:2px solid var(--indigo); outline-offset:2px;}
+  .camp-card.expanded{grid-column:1/-1; background:var(--bg); border-color:var(--indigo-light);}
+  .camp-card.expanded:hover{transform:none;}
+  .camp-compare-head{display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:14px;}
+  .camp-compare-head b{font-size:14.5px; font-weight:800; word-break:keep-all;}
+  .camp-compare-head span{flex:none; font-size:12px; font-weight:700; color:var(--sub); padding:5px 10px; border-radius:999px; border:1px solid var(--border); background:#fff;}
+  .camp-compare .comp-card:hover{transform:none;}
   .camp-meta.sep{border-top:1px dashed var(--border); margin-top:6px; padding-top:8px;}
   .goal-bar-wrap{margin-top:8px;}
   .goal-bar-label{display:flex; justify-content:space-between; font-size:10.5px; color:var(--sub); margin-bottom:4px;}
