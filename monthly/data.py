@@ -117,6 +117,7 @@ def read_insight(data: bytes, name: str, into: InsightData | None = None) -> Ins
             ix = {h: hdr.index(h) for h in OPTION_COLS}
             opt_ix = lambda h: hdr.index(h) if h in hdr else None
             i_ord, i_qty, i_cat = opt_ix("주문"), opt_ix("판매량"), opt_ix("카테고리")
+            i_pid, i_pname = opt_ix("등록상품ID"), opt_ix("상품명")
             rows = {}
             for r in it:
                 oid = r[ix["옵션 ID"]]
@@ -127,7 +128,9 @@ def read_insight(data: bytes, name: str, into: InsightData | None = None) -> Ins
                              "rev": num(r[ix["매출(원)"]]), "vis": num(r[ix["방문자"]]),
                              "ord": num(r[i_ord]) if i_ord is not None else 0.0,
                              "qty": num(r[i_qty]) if i_qty is not None else 0.0,
-                             "cat": str(r[i_cat] or "") if i_cat is not None else ""}
+                             "cat": str(r[i_cat] or "") if i_cat is not None else "",
+                             "pid": str(r[i_pid]).split(".")[0].strip() if i_pid is not None and r[i_pid] not in (None, "") else "",
+                             "pname": str(r[i_pname] or "") if i_pname is not None else ""}
             pending_opts.append((ws.title, rows))
             found = True
     for title, rows in pending_opts:

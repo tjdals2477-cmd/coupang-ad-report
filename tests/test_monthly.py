@@ -36,7 +36,9 @@ def month_file(y, m, days, rev_per_day, options, vis=1000, cvr="4.00%"):
         d = date(y, m, 1) + timedelta(i)
         daily.append([d.isoformat(), str(vis), "0", "0", "40", cvr, "0", str(rev_per_day)])
     daily.append(["", str(vis * days), "", "", "", "", "", str(rev_per_day * days)])  # 총계 행
-    opts = [OPT_HDR] + [[oid, name, name, "1", "가구", ch, str(rev), "1", "1", "10"] for oid, name, ch, rev in options]
+    # 옵션 튜플 5번째 값 = 등록상품ID (생략 시 빈칸 → 옵션 단위)
+    opts = [OPT_HDR] + [[o[0], o[1], o[1], o[4] if len(o) > 4 else "", "가구", o[2], str(o[3]), "1", "1", "10"]
+                        for o in options]
     return xlsx({"기간별 판매량": daily, "상품별 판매량": opts})
 
 
@@ -266,6 +268,25 @@ class MonthlyTest(unittest.TestCase):
         row = ctx["movers"][0]["rows"][0]
         self.assertEqual([x["label"] for x in row["series"]], ["8월", "9월", "10월(1~10일)"])
         self.assertIn("qty", row["series"][0])
+
+    def test_movers_grouped_by_product_id(self):
+        """같은 등록상품ID의 번들 옵션은 급변 상품에서 한 줄로 합산."""
+        ins = InsightData()
+        a = [("11", "엣지등, 1개", "판매자배송", 2_000_000, "777"), ("12", "엣지등, 5개", "판매자배송", 3_000_000, "777"),
+             ("13", "엣지등, 5개", "로켓그로스", 0, "777"), ("4", "기타", "판매자배송", 25_000_000)]
+        b = [("11", "엣지등, 1개", "판매자배송", 500_000, "777"), ("12", "엣지등, 5개", "판매자배송", 0, "777"),
+             ("13", "엣지등, 5개", "로켓그로스", 300_000, "777"), ("4", "기타", "판매자배송", 25_000_000)]
+        read_insight(month_file(2026, 8, 31, 1_000_000, a), "A_8월.xlsx", ins)
+        read_insight(month_file(2026, 9, 30, 1_000_000, b), "A_9월.xlsx", ins)
+        ctx = build_context(ins, None, None, self.s)
+        rows = ctx["movers"][0]["rows"]
+        self.assertEqual(len(rows), 1)
+        r = rows[0]
+        self.assertEqual(r["oid"], "p777")
+        self.assertEqual(r["diff"], -4_200_000)
+        self.assertEqual(r["ch"], "판매자배송+로켓그로스")
+        self.assertIn("옵션 3개", r["sub"])
+        self.assertEqual(r["series"][0]["rev"], 5_000_000)
 
     def test_render_has_detail_panels(self):
         ctx = build_context(self.ins, self.raw, None, self.s)

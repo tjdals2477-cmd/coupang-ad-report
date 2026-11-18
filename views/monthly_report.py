@@ -20,8 +20,10 @@ if "monthly_reports" not in st.session_state:
 
 
 # 업로드 데이터는 서버 메모리에만 잠시 캐시 (1시간)
+# 읽는 방식(read_insight)이 바뀌면 이 숫자를 올린다 — 재배포 후에도 예전 형식의 캐시가 쓰이지 않게
+INSIGHT_PARSER_VER = 2
 @st.cache_data(show_spinner="판매 데이터를 읽는 중…", ttl=3600, max_entries=16)
-def _insight(files: tuple) -> InsightData:
+def _insight(files: tuple, parser_ver: int) -> InsightData:
     ins = InsightData()
     for name, data in files:
         read_insight(data, name, ins)
@@ -81,7 +83,7 @@ def make_tab():
                                      help="시작일·종료일·광고비용·광고매출 열이 있는 시트. 없으면 광고 raw의 일합계를 씁니다.")
 
     try:
-        ins = _insight(tuple((f.name, f.getvalue()) for f in ins_files))
+        ins = _insight(tuple((f.name, f.getvalue()) for f in ins_files), INSIGHT_PARSER_VER)
         raw = _ad_raw(tuple((f.name, f.getvalue()) for f in raw_files)) if raw_files else None
     except MonthlyFileError as e:
         st.error(str(e))
@@ -189,7 +191,7 @@ def make_tab():
     last = ctx["last"]["short"]
     d1, d2, _ = st.columns([1, 1, 2])
     d1.download_button("⬇️ HTML 보고서 다운로드", data=html.encode("utf-8"),
-                       file_name=f"쿠팡_월간_성과_보고서_{s.account}_{last}.html", mime="text/html",
+                       file_name=f"쿠팡_{ctx['L']['rtype']}_성과_보고서_{s.account}_{ctx['last']['tag'].replace('/', '.')}.html", mime="text/html",
                        type="primary", width="stretch")
     tab_label = f"{s.account} 쿠팡 보고서"
     if d2.button("➕ 통합 목록에 추가", width="stretch"):

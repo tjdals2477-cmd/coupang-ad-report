@@ -235,6 +235,39 @@ def ad_context(raw: AdRaw | None, cutoff: date, recent_days: int) -> dict:
             "recent": (min(recent), max(recent)) if recent else None}
 
 
+_AD_RANK = ("집행중", "집행(", "확인필요", "중단", "미집행", "-")
+
+
+def by_product(rows: dict) -> dict:
+    """옵션별 행 → 등록상품ID 단위 합계 (번들·색상 옵션을 한 줄로). 등록상품ID가 없으면 옵션 그대로."""
+    out: dict = {}
+    for oid, r in rows.items():
+        key = f"p{r['pid']}" if r.get("pid") else oid
+        p = out.get(key)
+        if p is None:
+            p = out[key] = {"name": r.get("pname") or r["name"], "chs": [], "cat": r.get("cat", ""),
+                            "pid": r.get("pid", ""), "oids": [], "rev": 0.0, "vis": 0.0, "ord": 0.0, "qty": 0.0}
+        p["oids"].append(oid)
+        if r["ch"] and r["ch"] not in p["chs"]:
+            p["chs"].append(r["ch"])
+        for k in ("rev", "vis", "ord", "qty"):
+            p[k] += r.get(k, 0) or 0
+    for p in out.values():
+        p["ch"] = "+".join(sorted(p["chs"], key=lambda c: (c != "판매자배송", c)))  # 판매자배송 먼저
+    return out
+
+
+def product_ad(ad: dict, members: dict) -> dict:
+    """옵션 단위 광고 함수를 등록상품 단위(소속 옵션 합계·가장 활발한 상태)로 감싼다."""
+    oids = lambda key: members.get(key, [key])
+
+    def status(key):
+        sts = [ad["status"](o) for o in oids(key)]
+        return min(sts, key=lambda st: next((i for i, p in enumerate(_AD_RANK) if st.startswith(p)), len(_AD_RANK)))
+
+    return {**ad, "status": status, "spend": lambda key, s, e: sum(ad["spend"](o, s, e) for o in oids(key))}
+
+
 def movers(a: dict, b: dict, scale_b: float, window: tuple, group: dict, ad: dict,
            pa: tuple, pb: tuple, s: MonthlySettings) -> list[dict]:
     w0, w1, w_sc = window
@@ -266,7 +299,9 @@ def movers(a: dict, b: dict, scale_b: float, window: tuple, group: dict, ad: dic
                 verdict = ("채널 이동으로 설명됨(실질 급변 아님)" if abs(net) < s.min_diff
                            else f"이동분 빼도 순{'감소' if net < 0 else '증가'} {won(abs(net))} · 별도 원인 확인")
                 note = f"{shift} {kind} 이동 추정 · {other_ch} 옵션 {od:+,.0f}원 · {verdict}"
-        out.append({"oid": oid, "ch": info["ch"], "name": info["name"], "a": ra, "b": rb, "diff": diff,
+        n_opt = len({*a.get(oid, {}).get("oids", []), *b.get(oid, {}).get("oids", [])})
+        out.append({"oid": oid, "ch": info["ch"], "name": info["name"],
+                    "sub": (f"등록상품ID {info['pid']}" + (f" · 옵션 {n_opt}개" if n_opt > 1 else "")) if info.get("pid") else oid, "a": ra, "b": rb, "diff": diff,
                     "pct": pct_, "va": a.get(oid, {}).get("vis", 0), "vb": b.get(oid, {}).get("vis", 0) * scale_b,
                     "shift": shift, "note": note, "net": net,
                     "ad_status": ad["status"](oid) if ad["has"] else "-",
@@ -355,7 +390,8 @@ def item_group(name: str) -> str:
     return "기타"
 
 
-def category_trend(months: list[dict], option_by_month: dict, scale_of, top_n: int = 12) -> dict | None:
+def category_trend(months: list[dict], option_by_month: dict, scale_of, top_n: int = 12,
+                   labels: list | None = None) -> dict | None:
     """월별 품목군·쿠팡 카테고리 매출/판매량. 진행 중인 달은 월환산."""
     ms = [t for t in months if t["m"] in option_by_month]
     if not ms:
@@ -385,7 +421,8 @@ def category_trend(months: list[dict], option_by_month: dict, scale_of, top_n: i
                                     "qty": [sum(r["qty"][i] for r in rest) for i in range(len(ms))],
                                     "share": [sum(r["share"][i] for r in rest) for i in range(len(ms))], "delta": None}]
         out[mode] = {"rows": rows, "total": [tot[t["m"]] for t in ms]}
-    out["labels"] = [t["short"] + (" 월환산" if t["partial"] else "") for t in ms]
+    out["labels"] = labels or [t["short"] + (" 월환산" if t["partial"] else "") for t in ms]
+    out["scaled"] = labels is None and any(t["partial"] for t in ms)
     out["top_only"] = any(option_by_month[t["m"]][0].partial for t in ms)
     return out
 
@@ -481,7 +518,7 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
         if key in ("cost",):
             if not (last["ad_ok"] and prev["ad_ok"]):
                 return None, "광고 데이터 부족"
-            if last["partial"]:
+            if last["partial"] and not (recent and prev["days"] == last["days"]):
                 return delta(last["cost"] / last["days"], prev["cost"] / prev["days"]), f"일평균 기준, {prev_name} 대비"
             return delta(last["cost"], prev["cost"]), f"{prev_name} 대비"
         if key == "ad_ratio":
@@ -536,7 +573,13 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
             checks.append(("warn", f"{t['short']} 상품별 매출 합계({won(best.total)})가 일별 합계({won(t['rev'])})와 "
                                    f"{gap:+.0f}% 차이 납니다. 조회 기간이 맞는지 확인해 주세요. ({best.source})"))
     ad = ad_context(raw, cutoff, s.recent_days)
-    opt_dicts = [option_by_month[t["m"]][0].rows for t in months if t["m"] in option_by_month]
+    # 급변 상품은 등록상품ID 단위로 묶어서 본다 (번들·색상 옵션이 여러 줄로 흩어지지 않게)
+    from types import SimpleNamespace
+    prod_by_month = {m: (SimpleNamespace(rows=by_product(sh.rows), partial=sh.partial, total=sh.total), g)
+                     for m, (sh, g) in option_by_month.items()}
+    members = {k: p["oids"] for m in prod_by_month for k, p in prod_by_month[m][0].rows.items()}
+    ad_p = product_ad(ad, members)
+    opt_dicts = [prod_by_month[t["m"]][0].rows for t in months if t["m"] in prod_by_month]
     group = channel_groups(opt_dicts, s.channel_pairs)
 
     def scale_of(t):
@@ -556,17 +599,17 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
         return sc
 
     win_months = [t for t in months if t["m"] in option_by_month]
-    window = ((option_by_month[win_months[0]["m"]][0].rows, option_by_month[win_months[-1]["m"]][0].rows,
+    window = ((prod_by_month[win_months[0]["m"]][0].rows, prod_by_month[win_months[-1]["m"]][0].rows,
                scale_vs(win_months[0], win_months[-1])) if win_months else ({}, {}, 1.0))
     mover_sets = []
     for ta, tb in zip(months, months[1:]):
         if ta["m"] not in option_by_month or tb["m"] not in option_by_month:
             continue
         pa, pb = (ta["s"], ta["e"]), (tb["s"], tb["e"])
-        mv = movers(option_by_month[ta["m"]][0].rows, option_by_month[tb["m"]][0].rows, scale_vs(ta, tb),
-                    window, group, ad, pa, pb, s)
+        mv = movers(prod_by_month[ta["m"]][0].rows, prod_by_month[tb["m"]][0].rows, scale_vs(ta, tb),
+                    window, group, ad_p, pa, pb, s)
         for row in mv:
-            row["series"] = item_series(row["oid"], months, option_by_month, ad)
+            row["series"] = item_series(row["oid"], months, prod_by_month, ad_p)
         ca, cb = ad["coverage"](*pa) if ad["has"] else (0, 0), ad["coverage"](*pb) if ad["has"] else (0, 0)
         mover_sets.append({"id": f"mv{ta['m']}_{tb['m']}", "title": f"{ta['short']} → {tb['short']}",
                            "a_label": ta["tag"] if ta.get("gap") else ta["short"],
@@ -615,24 +658,46 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
         cb_ = campaign_breakdown(raw, t["s"], t["e"])
         if cb_:
             camp_months.append({"label": t["label"], "id": f"c{t['m']}", "month_cost": t["cost"] if t["ad_ok"] else None, **cb_})
-    cats = category_trend(months, option_by_month, scale_of)
+    if recent:  # 직전 기간 비교: 월환산하지 않고 최근 기간을 직전 기간 일수에 맞춤
+        cats = category_trend(months, option_by_month, lambda t: scale_vs(prev, t) if t is last else 1.0,
+                              labels=[t["tag"] for t in months if t["m"] in option_by_month])
+    else:
+        cats = category_trend(months, option_by_month, scale_of)
 
     # 주차 추이 · 배너
     weeks = weekly(daily, months[0]["s"] if len(months) < 3 else months[-2]["s"], cutoff)
     full = [w for w in weeks if not w["partial"]]
     word = trend_word([w["rev"] for w in full])
-    headline, sub = auto_headline(months, same, full, word)
+    headline, sub = auto_headline(months, same, full, word, recent)
+
+    # 보고서 문구: 월 단위 비교면 '월간', 직전 기간(같은 일수) 비교면 '기간'으로 통일
+    if recent:
+        f0 = min(d for d in daily if d >= months[0]["s"])
+        period_label = (f"{f0:%Y.%m.%d} ~ {last['e']:%m.%d} · 직전 기간 {prev['tag']}({prev['days']}일) vs "
+                        f"최근 기간 {last['tag']}({last['days']}일)")
+        same_days = prev["days"] == last["days"]
+        words = {"rtype": "기간", "unit": "기간", "kpi_title": "기간별 핵심 지표",
+                 "kpi_sub": f"매출 · 광고비 · 매출 대비 광고비 비율 · 판매량 · 구매전환율 — 직전 기간({prev['tag']})과 "
+                            f"최근 기간({last['tag']})을 {'같은 일수로' if same_days else '일평균으로'} 비교",
+                 "def_compare": ("<b>기간 비교</b> — 최근 기간을 바로 앞 같은 일수의 직전 기간과 비교" if same_days else
+                                 "<b>기간 비교</b> — 최근 기간과 직전 기간의 일수가 달라 매출·판매량·광고비는 일평균으로 비교")}
+    else:
+        period_label = (f"{months[0]['y']}년 {months[0]['m']}월~{last['m']}월"
+                        + (f" ({last['m']}/{last['e'].day}까지)" if last["partial"] else ""))
+        cmp_txt = (f"{last['short']}은 진행 중이라 {same['label'] if same else '직전 달'}과 비교" if last["partial"] else "")
+        words = {"rtype": "월간", "unit": "월", "kpi_title": "월별 핵심 지표",
+                 "kpi_sub": "매출 · 광고비 · 매출 대비 광고비 비율 · 판매량 · 구매전환율" + (f" — {cmp_txt}" if cmp_txt else ""),
+                 "def_compare": "<b>진행 중인 달 비교</b> — 직전 달 같은 일수와 비교, 광고비는 일평균 비교"}
 
     return {"s": s, "cutoff": cutoff, "months": months, "last": last, "prev": prev, "same": same,
             "kpis": kpis, "weeks": weeks, "trend_word": word,
             "headline": s.headline or headline, "headline_sub": s.headline_sub or sub,
             "auto_headline": headline, "auto_headline_sub": sub,
             "movers": mover_sets, "ad": ad, "checks": checks, "camp_months": camp_months, "cats": cats,
-            "period_label": f"{months[0]['y']}년 {months[0]['m']}월~{last['m']}월"
-                            + (f" ({last['m']}/{last['e'].day}까지)" if last["partial"] else "")}
+            "period_label": period_label, "recent": recent, "L": words}
 
 
-def auto_headline(months, same, weeks, word) -> tuple[str, str]:
+def auto_headline(months, same, weeks, word, recent: bool = False) -> tuple[str, str]:
     last = months[-1]
     prev = months[-2] if len(months) >= 2 else None
     if not prev:
@@ -640,6 +705,12 @@ def auto_headline(months, same, weeks, word) -> tuple[str, str]:
     base = same or prev
     d = delta(last["rev"], base["rev"])
     parts = [f"{last['label']} 매출은 {base.get('label', prev['short'])} 대비 {d['text'] if d else '-'}"]
+    if recent:  # 직전 기간 비교: "최근 15일(11/1~15) 매출은 직전 15일(10/17~31) 대비"
+        if prev["days"] == last["days"]:
+            parts = [f"최근 {last['days']}일({last['tag']}) 매출은 직전 {prev['days']}일({prev['tag']}) 대비 {d['text'] if d else '-'}"]
+        else:
+            dd = delta(last["rev"] / last["days"], prev["rev"] / prev["days"])
+            parts = [f"최근 기간({last['tag']}) 일평균 매출은 직전 기간({prev['tag']}) 대비 {dd['text'] if dd else '-'}"]
     if len(weeks) >= 3:
         w = [man(x["rev"]) for x in weeks[-3:]]
         parts.append(f"주차별 일평균은 {' → '.join(w)}원으로 {word}")

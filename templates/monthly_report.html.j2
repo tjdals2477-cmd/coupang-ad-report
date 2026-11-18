@@ -7,7 +7,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{{ s.account }} 쿠팡 월간 성과 보고서</title>
+<title>{{ s.account }} 쿠팡 {{ L.rtype }} 성과 보고서</title>
 {% include "_style.html.j2" %}
 <style>
   .pc-row{padding:7px 0;}
@@ -83,16 +83,16 @@
 <div class="wrap">
 
   <header>
-    <span class="eyebrow">쿠팡 온라인 매출 월간 보고 · {{ s.account }}</span>
-    <h1>{{ s.account }} 쿠팡 월간 성과 보고서</h1>
+    <span class="eyebrow">쿠팡 온라인 매출 {{ L.rtype }} 보고 · {{ s.account }}</span>
+    <h1>{{ s.account }} 쿠팡 {{ L.rtype }} 성과 보고서</h1>
     <div class="meta">{{ period_label }}{% if s.written %} &nbsp;|&nbsp; 작성일 {{ s.written }}{% endif %}</div>
   </header>
 
   <!-- 종합 요약 -->
   <div class="section" style="margin-top:0;">
     <div class="section-head">
-      <p class="section-title">월별 핵심 지표</p>
-      <p class="section-sub">매출 · 광고비 · 매출 대비 광고비 비율 · 판매량 · 구매전환율{% if last.partial %} — {{ last.short }}은 진행 중이라 {{ same.label if same else (('직전 기간(' ~ prev.tag ~ ')') if prev and prev.gap else '직전 달') }}과 비교{% endif %}</p>
+      <p class="section-title">{{ L.kpi_title }}</p>
+      <p class="section-sub">{{ L.kpi_sub }}</p>
     </div>
     <div class="pc-grid">
       {%- for k in kpis %}
@@ -123,7 +123,7 @@
       {%- for cm in camp_months %}
       <div class="cm-panel" data-cm-panel="{{ cm.id }}"{% if not loop.last %} hidden{% endif %}>
         <p class="sub" style="margin-top:10px">출처: {{ cm.source }} · 데이터 {{ cm.covered }}/{{ cm.days }}일
-          {%- if cm.month_cost and (cm.total.cost - cm.month_cost)|abs > cm.month_cost * 0.01 %} · 카드의 월 광고비({{ '{:,.0f}'.format(cm.month_cost) }}원)와 범위가 달라 합계가 다를 수 있음{% endif %}</p>
+          {%- if cm.month_cost and (cm.total.cost - cm.month_cost)|abs > cm.month_cost * 0.01 %} · 카드의 {{ L.unit }} 광고비({{ '{:,.0f}'.format(cm.month_cost) }}원)와 범위가 달라 합계가 다를 수 있음{% endif %}</p>
         <div class="table-wrap">
         <table class="dt">
           <tr><th>캠페인 / 품목</th><th>광고비</th><th>광고매출</th><th>ROAS</th><th>노출</th><th>클릭</th><th>CTR</th><th>CPC</th><th>주문</th><th>전환율</th></tr>
@@ -157,7 +157,7 @@
     <div class="kpi-panel" data-panel="rev" hidden>
       <button type="button" class="close" data-close>닫기 ✕</button>
       <h3>총매출 상세 — 카테고리별 매출 흐름</h3>
-      <p class="sub">품목군은 상품명 키워드로 묶은 분류입니다.{% if cats.top_only %} 상품별 데이터가 월별 TOP 10 상품뿐이라 그 범위 안의 흐름입니다.{% endif %} 진행 중인 달은 월환산 값.</p>
+      <p class="sub">품목군은 상품명 키워드로 묶은 분류입니다.{% if cats.top_only %} 상품별 데이터가 월별 TOP 10 상품뿐이라 그 범위 안의 흐름입니다.{% endif %} {% if cats.scaled %} 진행 중인 달은 월환산 값.{% elif recent %} 두 기간 모두 실제 합계(같은 일수 기준).{% endif %}</p>
       <div class="tab-bar" style="margin-top:4px">
         <button type="button" class="tab-btn active" data-cat="group">품목군(상품명 기준)</button>
         <button type="button" class="tab-btn" data-cat="cat">쿠팡 카테고리</button>
@@ -202,7 +202,7 @@
       <div class="chart-card">
         <div class="chart-legend"><span><i style="background:var(--teal)"></i>자연매출</span><span><i style="background:var(--indigo)"></i>광고전환매출</span></div>
         {%- if comp %}
-        <svg viewBox="0 0 {{ comp.w }} {{ comp.h }}" role="img" aria-label="월별 매출 구성 비중">
+        <svg viewBox="0 0 {{ comp.w }} {{ comp.h }}" role="img" aria-label="{{ L.unit }}별 매출 구성 비중">
           {%- for b in comp.bars %}
           <rect x="{{ '%.1f'|format(b.x) }}" y="{{ '%.1f'|format(b.ad_y) }}" width="{{ '%.1f'|format(b.w) }}" height="{{ '%.1f'|format(b.ad_h) }}" rx="6" fill="#5B4FE5"/>
           <rect x="{{ '%.1f'|format(b.x) }}" y="{{ '%.1f'|format(b.nat_y) }}" width="{{ '%.1f'|format(b.w) }}" height="{{ '%.1f'|format(b.nat_h) }}" rx="6" fill="#14b8a6"/>
@@ -216,7 +216,7 @@
       </div>
       <div class="table-wrap">
         <table class="mini-table">
-          <tr><th>월</th><th>총매출</th><th>광고전환매출</th><th>자연매출</th><th>자연 비중</th></tr>
+          <tr><th>{{ L.unit }}</th><th>총매출</th><th>광고전환매출</th><th>자연매출</th><th>자연 비중</th></tr>
           {%- for t in months %}
           <tr>
             <td><b>{{ t.label }}</b></td>
@@ -227,7 +227,7 @@
           </tr>
           {%- endfor %}
         </table>
-        <div class="note" style="margin-top:12px;">자연매출 = 총매출 − 광고전환매출(14일). 쿠팡 광고전환매출은 <b>할인쿠폰 적용 전 가격</b>으로 집계되고 광고 클릭 후 다른 상품 구매(간접전환)까지 포함해 실제보다 크게 잡히므로, 자연매출은 보수적인(낮은) 추정치입니다. 월별 비교(추이)로 보세요.</div>
+        <div class="note" style="margin-top:12px;">자연매출 = 총매출 − 광고전환매출(14일). 쿠팡 광고전환매출은 <b>할인쿠폰 적용 전 가격</b>으로 집계되고 광고 클릭 후 다른 상품 구매(간접전환)까지 포함해 실제보다 크게 잡히므로, 자연매출은 보수적인(낮은) 추정치입니다. {{ L.unit }}별 비교(추이)로 보세요.</div>
       </div>
     </div>
   </div>
@@ -236,7 +236,7 @@
   <div class="section">
     <div class="section-head">
       <p class="section-title">② 최근 흐름 — 주차별 일평균 매출 · 구매전환율</p>
-      <p class="section-sub">월 합계로는 안 보이는 방향성: 최근 3주 기준 <b style="color:var(--indigo)">{{ trend_word }}</b></p>
+      <p class="section-sub">{{ L.unit }} 합계로는 안 보이는 방향성: 최근 3주 기준 <b style="color:var(--indigo)">{{ trend_word }}</b></p>
     </div>
     <div class="chart-card">
       <div class="chart-legend"><span><i style="background:#8C7CFF"></i>일평균 매출</span><span><i style="background:var(--amber)"></i>구매전환율</span><span><i style="background:#D9D6FB"></i>4일 미만 주(참고)</span></div>
@@ -261,7 +261,7 @@
     </div>
     <div class="table-wrap" style="margin-top:14px;">
       <table class="mini-table">
-        <tr><th>월</th><th>방문자</th><th>일평균 방문자</th><th>구매전환율</th><th>일평균 매출</th><th>광고비</th><th>매출 대비 광고비</th></tr>
+        <tr><th>{{ L.unit }}</th><th>방문자</th><th>일평균 방문자</th><th>구매전환율</th><th>일평균 매출</th><th>광고비</th><th>매출 대비 광고비</th></tr>
         {%- for t in months %}
         <tr>
           <td><b>{{ t.label }}</b></td>
@@ -284,7 +284,7 @@
   <!-- ③ 급변 옵션 -->
   <div class="section">
     <div class="section-head">
-      <p class="section-title">③ 매출 급변 상품 (옵션 단위)</p>
+      <p class="section-title">③ 매출 급변 상품 (등록상품 단위)</p>
       <p class="section-sub">기준: 증감액 {{ '{:,.0f}'.format(s.min_diff) }}원 이상 &amp; 증감률 {{ '%.0f'|format(s.min_pct) }}% 이상 · 채널 이동(판매자배송↔로켓그로스)·광고 집행 여부 자동 표시</p>
     </div>
     {%- if mover_views %}
@@ -307,7 +307,7 @@
           <tr><th>상품(옵션)</th><th>판매방식</th><th>{{ mv.a_label }}</th><th>{{ mv.b_label }}</th><th>증감</th><th>광고</th><th>광고비 {{ mv.a_label }}→{{ mv.b_label.split(' ')[0] }}</th><th style="text-align:left">이슈(자동)</th></tr>
           {%- for r in mv.rows %}
           <tr class="{{ r.dir }} mrow" data-dir="{{ r.dir }}" data-shift="{{ '1' if r.shift else '' }}" data-mrow="{{ mv.id }}_{{ loop.index }}">
-            <td class="name">{{ r.name }}<span class="sub">{{ r.oid }}</span></td>
+            <td class="name">{{ r.name }}<span class="sub">{{ r.sub or r.oid }}</span></td>
             <td>{{ r.ch }}</td>
             <td>{{ '{:,.0f}'.format(r.a) }}</td>
             <td>{{ '{:,.0f}'.format(r.b) }}</td>
@@ -318,7 +318,7 @@
           </tr>
           <tr class="mdetail" data-mdetail="{{ mv.id }}_{{ loop.index }}" hidden><td colspan="8">
             <table class="mini">
-              <tr><th>월</th><th>매출</th><th>판매수량</th><th>주문</th><th>방문자</th><th>개당 매출</th><th>광고비</th></tr>
+              <tr><th>{{ L.unit }}</th><th>매출</th><th>판매수량</th><th>주문</th><th>방문자</th><th>개당 매출</th><th>광고비</th></tr>
               {%- for x in r.series %}
               <tr><td>{{ x.label }}</td><td>{{ '{:,.0f}'.format(x.rev) }}</td><td><b>{{ '{:,.0f}'.format(x.qty) }}</b></td><td>{{ '{:,.0f}'.format(x.ord) }}</td>
                 <td>{{ '{:,.0f}'.format(x.vis) }}</td><td>{{ '{:,.0f}'.format(x.unit) if x.unit else '-' }}</td><td>{{ '{:,.0f}'.format(x.ad) if x.ad is not none else '-' }}</td></tr>
@@ -348,12 +348,12 @@
       <li><b>매출 대비 광고비 비율</b> — 광고비 ÷ 총매출 × 100 (낮을수록 효율적)</li>
       <li><b>자연매출</b> — 총매출 − 광고전환매출(14일 기준). 광고전환매출이 쿠폰 적용 전 가격이라 낮게 추정됨</li>
       <li><b>구매전환율</b> — 주문 ÷ 조회 (쿠팡 Wing·서플라이어 허브 화면과 같은 정의)</li>
-      <li><b>진행 중인 달 비교</b> — 직전 달 같은 일수와 비교, 광고비는 일평균 비교</li>
+      <li>{{ L.def_compare|safe }}</li>
       <li><b>채널 이동</b> — 옵션명이 같고 판매방식만 다른 옵션이 반대로 움직이면 이동으로 판단</li>
     </ul>
   </div>
 
-  <footer>쿠팡 Wing 비즈니스 인사이트 · 광고 보고서 원본으로 자동 생성 · {{ s.account }} 쿠팡 월간 성과 보고서</footer>
+  <footer>쿠팡 Wing 비즈니스 인사이트 · 광고 보고서 원본으로 자동 생성 · {{ s.account }} 쿠팡 {{ L.rtype }} 성과 보고서</footer>
 </div>
 
 <script id="report-data" type="application/json">{{ data_json | safe }}</script>
