@@ -99,6 +99,7 @@ def read_insight(data: bytes, name: str, into: InsightData | None = None) -> Ins
         if DAILY_COLS <= set(hdr):
             ix = {h: hdr.index(h) for h in DAILY_COLS}
             i_view = hdr.index("조회") if "조회" in hdr else None
+            i_qty = hdr.index("판매량") if "판매량" in hdr else None
             months = []
             for r in it:
                 d = to_date(r[ix["날짜"]])
@@ -106,6 +107,7 @@ def read_insight(data: bytes, name: str, into: InsightData | None = None) -> Ins
                     continue  # 하단 총계 행
                 out.daily[d] = {"vis": num(r[ix["방문자"]]), "ord": num(r[ix["주문"]]),
                                 "view": num(r[i_view]) if i_view is not None else 0.0,
+                                "qty": num(r[i_qty]) if i_qty is not None else None,
                                 "cvr": num(r[ix["구매전환율"]]), "rev": num(r[ix["매출(원)"]])}
                 months.append(d.month)
             if months:

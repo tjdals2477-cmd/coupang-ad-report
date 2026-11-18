@@ -115,6 +115,9 @@ def period(daily: dict, ad_rows: list, s: date, e: date) -> dict:
          "rev": sum(daily[d]["rev"] for d in days), "vis": sum(daily[d]["vis"] for d in days),
          "ord": sum(daily[d]["ord"] for d in days)}
     t["view"] = sum(daily[d].get("view", 0) for d in days)
+    # 판매량: 일별 시트에 '판매량' 열이 없는 날이 섞이면 표시하지 않음
+    t["qty"] = (sum(daily[d]["qty"] for d in days)
+                if days and all(daily[d].get("qty") is not None for d in days) else None)
     t["cvr"] = cvr_of(daily, days)
     rows = [a for a in ad_rows if a["s"] >= s and a["e"] <= e]
     covered = {d for a in rows for d in _days(a["s"], a["e"])}
@@ -476,6 +479,8 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
                 return None, "광고 데이터 부족"
             return delta(last["ad_ratio"], prev["ad_ratio"], "pp"), f"{prev['short']} 대비 · 낮을수록 효율적"
         base = same if same else prev
+        if last.get(key) is None or base.get(key) is None:
+            return None, ""
         return delta(last[key], base[key], kind), (f"{same['label']} 대비" if same else f"{prev['short']} 대비")
 
     def rows_of(key, fmt):
@@ -485,7 +490,7 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
     kpis = []
     for label, key, fmt, kind in [("총매출", "rev", won, "pct"), ("광고비", "cost", won, "pct"),
                                   ("매출 대비 광고비 비율", "ad_ratio", lambda v: pct(v, 1), "pp"),
-                                  ("방문자 수", "vis", lambda v: f"{v:,.0f}명", "pct"),
+                                  ("판매량", "qty", lambda v: f"{v:,.0f}개", "pct"),
                                   ("구매전환율", "cvr", lambda v: pct(v, 2), "pp")]:
         rows = rows_of(key, fmt)
         if key == "cost":
@@ -620,7 +625,7 @@ def auto_headline(months, same, weeks, word) -> tuple[str, str]:
 
 def report_data(ctx: dict) -> dict:
     """통합 탭용 요약 수치 (보고서 HTML에 내장)."""
-    keep = ("rev", "vis", "view", "ord", "cvr", "cost", "adrev", "ad_ok", "days", "partial", "label", "short", "tag", "m")
+    keep = ("rev", "vis", "qty", "view", "ord", "cvr", "cost", "adrev", "ad_ok", "days", "partial", "label", "short", "tag", "m")
     def slim(t):
         return {k: t[k] for k in keep if k in t} | {"cvr_w": t["cvr"] * t["vis"]}
     return {"kind": "monthly", "version": 1, "account": ctx["s"].account,
