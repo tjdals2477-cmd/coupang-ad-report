@@ -92,7 +92,7 @@
   <div class="section" style="margin-top:0;">
     <div class="section-head">
       <p class="section-title">월별 핵심 지표</p>
-      <p class="section-sub">매출 · 광고비 · 매출 대비 광고비 비율 · 방문자 · 구매전환율{% if last.partial %} — {{ last.short }}은 진행 중이라 {{ same.label if same else '직전 달' }}과 비교{% endif %}</p>
+      <p class="section-sub">매출 · 광고비 · 매출 대비 광고비 비율 · 판매량 · 구매전환율{% if last.partial %} — {{ last.short }}은 진행 중이라 {{ same.label if same else (('직전 기간(' ~ prev.tag ~ ')') if prev and prev.gap else '직전 달') }}과 비교{% endif %}</p>
     </div>
     <div class="pc-grid">
       {%- for k in kpis %}
@@ -331,7 +331,7 @@
       {%- else %}<div class="empty">기준을 넘는 급변 상품이 없습니다.</div>{% endif %}
       <p class="top5-note">
         {%- if mv.top_only %}상품별 데이터는 월별 매출 TOP 10 상품(+다른 달 TOP 10의 해당 월 값)만 포함합니다. {% endif -%}
-        {%- if mv.partial %}{{ mv.b_label.split(' ')[0] }}은 진행 중이라 일평균×월 일수로 환산한 값입니다. {% endif -%}
+        {%- if mv.recent %}{{ mv.a_label }}과 {{ mv.b_label }}를 같은 일수 기준으로 비교한 값입니다. {% elif mv.partial %}{{ mv.b_label.split(' ')[0] }}은 진행 중이라 일평균×월 일수로 환산한 값입니다. {% endif -%}
         {%- if ad.has %}광고비는 광고집행 옵션 기준 실집행액(데이터 {{ mv.a_label }} {{ mv.cov_a[0] }}/{{ mv.cov_a[1] }}일 · {{ mv.b_label.split(' ')[0] }} {{ mv.cov_b[0] }}/{{ mv.cov_b[1] }}일){% if mv.gap_txt %} — 광고 데이터 없는 기간: {{ mv.gap_txt }}{% endif %}.
         광고 상태는 광고 데이터 마지막 {{ s.recent_days }}일{% if ad.recent %}({{ ad.recent[0].month }}/{{ ad.recent[0].day }}~{{ ad.recent[1].month }}/{{ ad.recent[1].day }}){% endif %} 기준.{% endif %}
       </p>

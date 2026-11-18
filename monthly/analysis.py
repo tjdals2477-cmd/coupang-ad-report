@@ -454,6 +454,11 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
         t.update(y=y, m=m, partial=partial, month_days=_month_end(y, m).day,
                  label=f"{m}월" + (f"(1~{end.day}일)" if partial else ""), short=f"{m}월",
                  tag=f"{m}/1~{end.day}" if partial else f"{m}월")
+        have = [d for d in daily if start <= d <= end]
+        t["gap"] = len(have) < (end - start).days + 1
+        if t["gap"]:  # 1일~말일이 다 있지 않으면 실제 데이터 기간으로 표시 (예: 10/17~31)
+            a, b = min(have).day, max(have).day
+            t.update(label=f"{m}월({a}~{b}일)", tag=f"{m}/{a}~{b}")
         months.append(t)
     last, prev = months[-1], (months[-2] if len(months) >= 2 else None)
 
@@ -463,6 +468,11 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
         pe = min(date(prev["y"], prev["m"], 1) + timedelta(last["e"].day - 1), prev["e"])
         same = period(daily, ad_rows, date(prev["y"], prev["m"], 1), pe)
         same["label"] = f"{prev['m']}월 동기간(1~{pe.day}일)"
+        if same["days"] == 0:  # 직전 달은 일부 기간만 올림 → 직전 기간 비교
+            same = None
+    # 직전 기간 비교: 진행 중인 달을 바로 앞 같은 일수(예: 10/17~31)와 비교하려고 직전 달을 일부만 올린 경우
+    recent = bool(prev and last["partial"] and same is None and prev.get("gap"))
+    prev_name = prev["tag"] if prev and prev.get("gap") else (prev["short"] if prev else "")
 
     def cmp(key, kind="pct", per_day=False):
         """(증감, 설명). 진행 중인 달: 매출·방문자·전환율은 동기간, 광고는 일평균 vs 직전 달."""
@@ -472,16 +482,19 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
             if not (last["ad_ok"] and prev["ad_ok"]):
                 return None, "광고 데이터 부족"
             if last["partial"]:
-                return delta(last["cost"] / last["days"], prev["cost"] / prev["days"]), f"일평균 기준, {prev['short']} 대비"
-            return delta(last["cost"], prev["cost"]), f"{prev['short']} 대비"
+                return delta(last["cost"] / last["days"], prev["cost"] / prev["days"]), f"일평균 기준, {prev_name} 대비"
+            return delta(last["cost"], prev["cost"]), f"{prev_name} 대비"
         if key == "ad_ratio":
             if last["ad_ratio"] is None or prev["ad_ratio"] is None:
                 return None, "광고 데이터 부족"
-            return delta(last["ad_ratio"], prev["ad_ratio"], "pp"), f"{prev['short']} 대비 · 낮을수록 효율적"
+            return delta(last["ad_ratio"], prev["ad_ratio"], "pp"), f"{prev_name} 대비 · 낮을수록 효율적"
         base = same if same else prev
         if last.get(key) is None or base.get(key) is None:
             return None, ""
-        return delta(last[key], base[key], kind), (f"{same['label']} 대비" if same else f"{prev['short']} 대비")
+        if recent and kind == "pct" and prev["days"] != last["days"]:
+            return (delta(last[key] / last["days"], base[key] / base["days"], kind),
+                    f"일평균 기준, {prev_name} 대비")
+        return delta(last[key], base[key], kind), (f"{same['label']} 대비" if same else f"{prev_name} 대비")
 
     def rows_of(key, fmt):
         return [{"tag": t["tag"], "text": fmt(t[key]) if t.get(key) is not None else None,
@@ -501,6 +514,14 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
 
     # 옵션 · 급변
     checks, option_by_month = [], {}
+    # 직전 달을 일부 기간만 올린 경우(예: 11/1~15 vs 직전 15일 10/17~31) → 직전 기간 비교로 안내
+    if recent:
+        how = ("같은 일수라 합계로 비교합니다." if prev["days"] == last["days"]
+               else f"일수가 달라({prev['days']}일 vs {last['days']}일) 매출·판매량은 일평균으로 비교합니다.")
+        checks.append(("info", f"{last['tag']}를 직전 기간 {prev['tag']}({prev['days']}일)과 비교합니다. {how}"))
+    for t in months[:-2] if recent else months[:-1]:
+        if t.get("gap"):
+            checks.append(("info", f"{t['short']}는 {t['tag']} 데이터만 있어 그 기간 합계로 표시합니다."))
     for t in months:
         cands = [o for o in ins.options if o.month == t["m"]]
         best, gap = pick_option_sheet(cands, t["rev"])
@@ -527,25 +548,34 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
         # 전체 시트: 당일 부분집계가 섞일 수 있어 일별 기준 월환산 매출에 비례 배분
         return (t["rev"] / t["days"] * t["month_days"]) / sheet.total if sheet.total and t["days"] else 1.0
 
+    def scale_vs(ta, tb):
+        """tb 옵션 매출을 ta와 같은 기준으로 맞추는 배율. ta가 일부 기간뿐이면(예: 10/17~31) 그 일수로 환산."""
+        sc = scale_of(tb)
+        if ta.get("gap") and tb["month_days"]:
+            sc *= ta["days"] / tb["month_days"]
+        return sc
+
     win_months = [t for t in months if t["m"] in option_by_month]
     window = ((option_by_month[win_months[0]["m"]][0].rows, option_by_month[win_months[-1]["m"]][0].rows,
-               scale_of(win_months[-1])) if win_months else ({}, {}, 1.0))
+               scale_vs(win_months[0], win_months[-1])) if win_months else ({}, {}, 1.0))
     mover_sets = []
     for ta, tb in zip(months, months[1:]):
         if ta["m"] not in option_by_month or tb["m"] not in option_by_month:
             continue
         pa, pb = (ta["s"], ta["e"]), (tb["s"], tb["e"])
-        mv = movers(option_by_month[ta["m"]][0].rows, option_by_month[tb["m"]][0].rows, scale_of(tb),
+        mv = movers(option_by_month[ta["m"]][0].rows, option_by_month[tb["m"]][0].rows, scale_vs(ta, tb),
                     window, group, ad, pa, pb, s)
         for row in mv:
             row["series"] = item_series(row["oid"], months, option_by_month, ad)
         ca, cb = ad["coverage"](*pa) if ad["has"] else (0, 0), ad["coverage"](*pb) if ad["has"] else (0, 0)
         mover_sets.append({"id": f"mv{ta['m']}_{tb['m']}", "title": f"{ta['short']} → {tb['short']}",
-                           "a_label": ta["short"], "b_label": tb["short"] + (" 월환산" if tb["partial"] else ""),
+                           "a_label": ta["tag"] if ta.get("gap") else ta["short"],
+                           "b_label": ((tb["tag"] if ta["days"] == tb["days"] else f"{tb['tag']} → {ta['days']}일 환산") if ta.get("gap")
+                                                     else (" 월환산" if tb["partial"] else "")),
                            "rows": mv, "n_down": sum(1 for m in mv if m["diff"] < 0),
                            "n_up": sum(1 for m in mv if m["diff"] > 0),
                            "n_shift": sum(1 for m in mv if m["shift"]),
-                           "cov_a": ca, "cov_b": cb, "partial": tb["partial"],
+                           "cov_a": ca, "cov_b": cb, "partial": tb["partial"], "recent": bool(ta.get("gap")),
                            "top_only": option_by_month[ta["m"]][0].partial or option_by_month[tb["m"]][0].partial,
                            "gaps": ad["gaps"](ta["s"], tb["e"]) if ad["has"] else []})
 
