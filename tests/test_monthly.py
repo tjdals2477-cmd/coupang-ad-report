@@ -326,6 +326,20 @@ class MonthlyTest(unittest.TestCase):
         self.assertIn("data-mdetail=", html)
         self.assertIn("판매수량", html)
 
+    def test_merge_includes_ad_only_account(self):
+        from monthly.render import render_monthly_summary
+        html = render_monthly(build_context(self.ins, self.raw, None, self.s))
+        a = extract_report_data(html)
+        mk = lambda t, rev, cost: {**t, "rev": rev, "cost": cost, "adrev": cost * 5, "ad_ok": True,
+                                   "vis": 0, "view": 0, "ord": 0, "cvr": 0, "cvr_w": 0, "qty": None}
+        b = {"kind": "monthly", "account": "광고만", "ad_only": True, "same": None, "trend_word": "-",
+             "months": [mk(t, 1_000_000, 100_000) for t in a["months"]]}
+        page = render_monthly_summary([a, b], "통합")
+        self.assertIn("광고만", page)
+        self.assertIn("광고만 제외(판매 데이터 없음)", page)
+        only_a = render_monthly_summary([a, {**a, "account": "B"}], "통합")
+        self.assertNotIn("제외(판매 데이터 없음)", only_a)
+
     def test_render_and_merge(self):
         ctx = build_context(self.ins, self.raw, None, self.s)
         html = render_monthly(ctx)

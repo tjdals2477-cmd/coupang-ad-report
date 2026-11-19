@@ -77,34 +77,47 @@ def render_monthly(ctx: dict) -> str:
 # ---------------- 계정 통합 ----------------
 
 def _sum_cvr(ts: list[dict]) -> float:
+    ts = [t for t in ts if t.get("view") or t.get("vis")]   # 판매 데이터 없는 계정(광고 보고서만)은 제외
+    if not ts:
+        return 0
     if all(t.get("view") for t in ts):
         return sum(t["ord"] for t in ts) / sum(t["view"] for t in ts) * 100
     vis = sum(t["vis"] for t in ts)
     return sum(t["cvr_w"] for t in ts) / vis if vis else 0
 
 
+def _ad_only(d: dict) -> bool:
+    """광고 보고서 + 직접 입력한 총매출만 있는 계정 — 판매량·구매전환율 합산에서 뺀다."""
+    return bool(d.get("ad_only"))
+
+
 def render_monthly_summary(datas: list[dict], title: str) -> str:
     """각 계정 보고서에 내장된 월별 수치를 월 단위로 합산."""
-    labels = [t["short"] for t in datas[0]["months"]]
+    full = [d for d in datas if not _ad_only(d)] or datas   # 판매량·구매전환율을 합산할 계정
+    excluded = [d["account"] for d in datas if _ad_only(d)]
+    labels = [t["short"] for t in full[0]["months"]]
     months = []
     for i, short in enumerate(labels):
         ts = [next((t for t in d["months"] if t["short"] == short), None) for d in datas]
         ts = [t for t in ts if t]
+        tf = [t for t in (next((t for t in d["months"] if t["short"] == short), None) for d in full) if t]
         ad_ok = all(t["ad_ok"] for t in ts) and len(ts) == len(datas)
-        vis = sum(t["vis"] for t in ts)
-        qty = sum(t["qty"] for t in ts) if all(t.get("qty") is not None for t in ts) else None
+        vis = sum(t["vis"] for t in tf)
+        qty = sum(t["qty"] for t in tf) if all(t.get("qty") is not None for t in tf) else None
         rev = sum(t["rev"] for t in ts)
         cost, adrev = sum(t["cost"] for t in ts), sum(t["adrev"] for t in ts)
         months.append({"short": short, "label": ts[0]["label"], "tag": ts[0].get("tag", ts[0]["label"]), "partial": ts[0]["partial"],
-                       "rev": rev, "vis": vis, "qty": qty, "cvr": _sum_cvr(ts),
+                       "rev": rev, "vis": vis, "qty": qty, "cvr": _sum_cvr(tf),
                        "cost": cost if ad_ok else None, "adrev": adrev if ad_ok else None,
                        "ad_ratio": cost / rev * 100 if ad_ok and rev else None,
                        "ad_share": adrev / rev * 100 if ad_ok and rev else None, "n": len(ts)})
     last, prev = months[-1], (months[-2] if len(months) >= 2 else None)
     sames = [d.get("same") for d in datas]
     same_rev = sum(x["rev"] for x in sames) if all(sames) else None
-    same_qty = (sum(x["qty"] for x in sames)
-                if all(sames) and all(x.get("qty") is not None for x in sames) else None)
+    fsames = [d.get("same") for d in full]
+    same_qty = (sum(x["qty"] for x in fsames)
+                if all(fsames) and all(x.get("qty") is not None for x in fsames) else None)
+    ex_txt = f" · {', '.join(excluded)} 제외(판매 데이터 없음)" if excluded else ""
     base_how = "직전 달 동기간 대비" if last["partial"] and same_rev else "직전 달 대비"
     rows = []
     for d in datas:
@@ -115,7 +128,8 @@ def render_monthly_summary(datas: list[dict], title: str) -> str:
                      "cost": won(t["cost"]) if t["ad_ok"] else "-",
                      "ratio": pct(t["cost"] / t["rev"] * 100, 1) if t["ad_ok"] and t["rev"] else "-",
                      "share": pct(100 - t["adrev"] / t["rev"] * 100, 0) if t["ad_ok"] and t["rev"] else "-",
-                     "vis": f"{t['vis']:,.0f}", "cvr": pct(t["cvr"], 2), "trend": d.get("trend_word", "-"),
+                     "vis": "-" if _ad_only(d) else f"{t['vis']:,.0f}",
+                     "cvr": "-" if _ad_only(d) else pct(t["cvr"], 2), "trend": d.get("trend_word", "-"),
                      "rev_share": t["rev"] / last["rev"] * 100 if last["rev"] else 0})
     kpis = [
         {"label": "총매출", "rows": [(m["tag"], won(m["rev"])) for m in months],
@@ -128,9 +142,9 @@ def render_monthly_summary(datas: list[dict], title: str) -> str:
          "how": "낮을수록 효율적"},
         {"label": "판매량", "rows": [(m["tag"], f"{m['qty']:,.0f}개" if m["qty"] is not None else "-") for m in months],
          "delta": (lambda b: delta(last["qty"], b) if last["qty"] is not None and b is not None else None)(
-             same_qty if (last["partial"] and same_qty is not None) else (prev or {}).get("qty")), "how": base_how},
+             same_qty if (last["partial"] and same_qty is not None) else (prev or {}).get("qty")), "how": base_how + ex_txt},
         {"label": "구매전환율", "rows": [(m["tag"], pct(m["cvr"], 2)) for m in months],
-         "delta": delta(last["cvr"], prev["cvr"], "pp") if prev else None, "how": "Σ주문 ÷ Σ조회"},
+         "delta": delta(last["cvr"], prev["cvr"], "pp") if prev else None, "how": "Σ주문 ÷ Σ조회" + ex_txt},
     ]
     tpl = _env.get_template("monthly_summary.html.j2")
     return tpl.render(title=title, kpis=kpis, rows=rows, months=months,
