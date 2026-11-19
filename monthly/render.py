@@ -82,19 +82,25 @@ def _sum_cvr(ts: list[dict]) -> float:
         return 0
     if all(t.get("view") for t in ts):
         return sum(t["ord"] for t in ts) / sum(t["view"] for t in ts) * 100
-    vis = sum(t["vis"] for t in ts)
+    vis = sum(t.get("cvr_n") or t["vis"] for t in ts)   # cvr_n: 광고 전용 계정은 클릭수로 가중
     return sum(t["cvr_w"] for t in ts) / vis if vis else 0
 
 
 def _ad_only(d: dict) -> bool:
-    """광고 보고서 + 직접 입력한 총매출만 있는 계정 — 판매량·구매전환율 합산에서 뺀다."""
+    """광고 보고서 + 직접 입력한 총매출만 있는 계정 — 판매량·구매전환율은 광고 전환 기준(판매량=광고 판매수량, 전환율=광고 주문÷클릭)."""
     return bool(d.get("ad_only"))
+
+
+def _has_sales(d: dict) -> bool:
+    """판매량·구매전환율을 합산할 수 있는 계정 (광고 전환 수치가 없는 예전 광고 전용 보고서만 제외)."""
+    return not _ad_only(d) or all(t.get("qty") is not None and t.get("view") for t in d["months"])
 
 
 def render_monthly_summary(datas: list[dict], title: str) -> str:
     """각 계정 보고서에 내장된 월별 수치를 월 단위로 합산."""
-    full = [d for d in datas if not _ad_only(d)] or datas   # 판매량·구매전환율을 합산할 계정
-    excluded = [d["account"] for d in datas if _ad_only(d)]
+    full = [d for d in datas if _has_sales(d)] or datas   # 판매량·구매전환율을 합산할 계정
+    excluded = [d["account"] for d in datas if not _has_sales(d)]
+    ad_basis = [d["account"] for d in datas if _ad_only(d) and _has_sales(d)]
     labels = [t["short"] for t in full[0]["months"]]
     months = []
     for i, short in enumerate(labels):
@@ -117,7 +123,8 @@ def render_monthly_summary(datas: list[dict], title: str) -> str:
     fsames = [d.get("same") for d in full]
     same_qty = (sum(x["qty"] for x in fsames)
                 if all(fsames) and all(x.get("qty") is not None for x in fsames) else None)
-    ex_txt = f" · {', '.join(excluded)} 제외(판매 데이터 없음)" if excluded else ""
+    ex_txt = (f" · {', '.join(excluded)} 제외(판매 데이터 없음)" if excluded else "") + \
+             (f" · {', '.join(ad_basis)}은 광고 전환 기준" if ad_basis else "")
     base_how = "직전 달 동기간 대비" if last["partial"] and same_rev else "직전 달 대비"
     rows = []
     for d in datas:
@@ -129,7 +136,8 @@ def render_monthly_summary(datas: list[dict], title: str) -> str:
                      "ratio": pct(t["cost"] / t["rev"] * 100, 1) if t["ad_ok"] and t["rev"] else "-",
                      "share": pct(100 - t["adrev"] / t["rev"] * 100, 0) if t["ad_ok"] and t["rev"] else "-",
                      "vis": "-" if _ad_only(d) else f"{t['vis']:,.0f}",
-                     "cvr": "-" if _ad_only(d) else pct(t["cvr"], 2), "trend": d.get("trend_word", "-"),
+                     "cvr": ("-" if not _has_sales(d) else pct(t["cvr"], 2) + " (광고)") if _ad_only(d) else pct(t["cvr"], 2),
+                     "trend": d.get("trend_word", "-"),
                      "rev_share": t["rev"] / last["rev"] * 100 if last["rev"] else 0})
     kpis = [
         {"label": "총매출", "rows": [(m["tag"], won(m["rev"])) for m in months],

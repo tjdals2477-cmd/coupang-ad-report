@@ -336,7 +336,14 @@ class MonthlyTest(unittest.TestCase):
              "months": [mk(t, 1_000_000, 100_000) for t in a["months"]]}
         page = render_monthly_summary([a, b], "통합")
         self.assertIn("광고만", page)
-        self.assertIn("광고만 제외(판매 데이터 없음)", page)
+        self.assertIn("광고만 제외(판매 데이터 없음)", page)   # 광고 전환 수치가 없는 예전 파일은 제외
+        withq = {**b, "months": [{**t, "qty": 50, "view": 1000, "ord": 40, "cvr": 4.0} for t in b["months"]]}
+        page2 = render_monthly_summary([a, withq], "통합")
+        self.assertIn("광고만은 광고 전환 기준", page2)
+        self.assertNotIn("제외(판매 데이터 없음)", page2)
+        last_a = a["months"][-1]
+        if last_a.get("qty") is not None:
+            self.assertIn(f"{last_a['qty'] + 50:,.0f}개", page2)
         only_a = render_monthly_summary([a, {**a, "account": "B"}], "통합")
         self.assertNotIn("제외(판매 데이터 없음)", only_a)
 
