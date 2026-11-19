@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import csv
 import io
 import re
 import warnings
@@ -64,6 +65,48 @@ def _header(row) -> list[str]:
 DAILY_COLS = {"날짜", "방문자", "주문", "구매전환율", "매출(원)"}
 OPTION_COLS = {"옵션 ID", "옵션명", "판매방식", "매출(원)", "방문자"}
 
+# 로켓배송(서플라이어 허브) '상품별 판매'·'기간별 판매' 내려받기 양식 → Wing 비즈니스 인사이트 열 이름으로 바꿔 읽는다.
+# 상품별 양식에는 판매방식 열이 없으므로 모두 '로켓배송'으로 둔다.
+ROCKET_HEADER = {
+    "벤더아이템 ID": "옵션 ID", "벤더아이템명": "옵션명", "상품 ID": "등록상품ID", "상품카테고리": "카테고리",
+    "매출액(GMV)": "매출(원)", "주문건수": "주문", "판매 수량": "판매량", "방문자 수": "방문자", "조회수": "조회",
+    "구매전환율 (%)": "구매전환율",
+}
+ROCKET_CH = "로켓배송"
+
+
+def _rocket_header(hdr: list[str]) -> tuple[list[str], bool]:
+    """서플라이어 허브 양식이면 열 이름을 Wing 양식으로 바꾼다.
+    반환 (헤더, 판매방식 열 덧붙임 여부) — 상품별 양식만 판매방식 열을 덧붙인다."""
+    if "매출액(GMV)" not in hdr:
+        return hdr, False
+    out = [ROCKET_HEADER.get(h, h) for h in hdr]
+    if "벤더아이템 ID" in hdr and "판매방식" not in out:
+        out.append("판매방식")
+        return out, True
+    return out, False
+
+
+def _csv_rows(data: bytes) -> list[list]:
+    for enc in ("utf-8-sig", "cp949"):
+        try:
+            text = data.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        raise MonthlyFileError("CSV 파일의 글자 인코딩을 읽을 수 없습니다 (UTF-8 또는 CP949만 지원).")
+    return [r for r in csv.reader(io.StringIO(text))]
+
+
+def _insight_sheets(data: bytes, name: str):
+    """(시트 이름, 행 반복자) — CSV는 시트 1개로 취급."""
+    if name.lower().endswith(".csv"):
+        yield "CSV", iter(_csv_rows(data))
+        return
+    for ws in _open(data).worksheets:
+        yield ws.title, ws.iter_rows(values_only=True)
+
 
 @dataclass
 class OptionSheet:
@@ -86,16 +129,15 @@ class InsightData:
 
 def read_insight(data: bytes, name: str, into: InsightData | None = None) -> InsightData:
     out = into or InsightData()
-    wb = _open(data)
     found = False
     daily_month = None
     pending_opts = []
-    for ws in wb.worksheets:
-        it = ws.iter_rows(values_only=True)
+    for title, it in _insight_sheets(data, name):
         try:
             hdr = _header(next(it))
         except StopIteration:
             continue
+        hdr, rocket = _rocket_header(hdr)
         if DAILY_COLS <= set(hdr):
             ix = {h: hdr.index(h) for h in DAILY_COLS}
             i_view = hdr.index("조회") if "조회" in hdr else None
@@ -120,6 +162,10 @@ def read_insight(data: bytes, name: str, into: InsightData | None = None) -> Ins
             i_pid, i_pname = opt_ix("등록상품ID"), opt_ix("상품명")
             rows = {}
             for r in it:
+                if rocket:
+                    r = list(r) + [ROCKET_CH]   # 덧붙인 판매방식 열
+                if not r or len(r) <= ix["옵션 ID"]:
+                    continue
                 oid = r[ix["옵션 ID"]]
                 if oid in (None, ""):
                     continue
@@ -131,7 +177,7 @@ def read_insight(data: bytes, name: str, into: InsightData | None = None) -> Ins
                              "cat": str(r[i_cat] or "") if i_cat is not None else "",
                              "pid": str(r[i_pid]).split(".")[0].strip() if i_pid is not None and r[i_pid] not in (None, "") else "",
                              "pname": str(r[i_pname] or "") if i_pname is not None else ""}
-            pending_opts.append((ws.title, rows))
+            pending_opts.append((title, rows))
             found = True
     for title, rows in pending_opts:
         month = daily_month or _month_from_name(name)

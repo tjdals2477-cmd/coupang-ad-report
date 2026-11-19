@@ -288,6 +288,36 @@ class MonthlyTest(unittest.TestCase):
         self.assertIn("옵션 3개", r["sub"])
         self.assertEqual(r["series"][0]["rev"], 5_000_000)
 
+    def test_rocket_supplier_hub_csv_and_xlsx(self):
+        hdr = ["벤더아이템 ID", "벤더아이템명", "상품 ID", "상품카테고리", "재고 ID", "매출액(GMV)", "주문건수",
+               "판매 수량", "방문자 수", "조회수", "구매전환율 (%)"]
+        rows = [["95059779663", "고네오 2구 클래식 콘센트 화이트, 1개", "9432741969", "콘센트", "", "1580500", "229", "289", "1994", "3954", "5.79"],
+                ["94774461945", "파워트랙 5구", "9336537960", "콘센트", "", "-175000", "0", "-1", "3", "11", "0.0"]]
+        text = "\n".join(",".join(f'"{v}"' for v in r) for r in [hdr] + rows)
+        for name, blob in (("고네오_11월1일-15일_상품별 판매.csv", text.encode("utf-8-sig")),
+                           ("고네오_11월 상품별 판매.csv", text.encode("cp949")),
+                           ("고네오_11월 상품별 판매.xlsx", xlsx({"Sheet1": [hdr] + rows}))):
+            ins = read_insight(blob, name, InsightData())
+            self.assertEqual(len(ins.options), 1, name)
+            sheet = ins.options[0]
+            self.assertEqual(sheet.month, 11)
+            r = sheet.rows["95059779663"]
+            self.assertEqual((r["ch"], r["rev"], r["ord"], r["qty"], r["vis"], r["pid"], r["cat"]),
+                             ("로켓배송", 1580500, 229, 289, 1994, "9432741969", "콘센트"))
+            self.assertEqual(sheet.total, 1580500 - 175000)
+
+    def test_rocket_supplier_hub_daily_csv(self):
+        hdr = ["날짜", "방문자 수", "조회수", "주문건수", "구매전환율 (%)", "판매 수량", "매출액(GMV)"]
+        rows = [["2026-11-01", "1686", "3194", "204", "6.386975579211021", "192", "2335040"],
+                ["2026-11-02", "1766", "3352", "263", "7.846062052505967", "282", "3387190"],
+                ["", "3452", "6546", "467", "7.1", "474", "5722230"]]   # 총계 행
+        text = "\n".join(",".join(f'"{v}"' for v in r) for r in [hdr] + rows)
+        ins = read_insight(text.encode("utf-8-sig"), "고네오_11월1일-15일_기간별 판매.csv", InsightData())
+        self.assertEqual(len(ins.daily), 2)
+        d = ins.daily[date(2026, 11, 1)]
+        self.assertEqual((d["vis"], d["view"], d["ord"], d["qty"], d["rev"]), (1686, 3194, 204, 192, 2335040))
+        self.assertAlmostEqual(d["cvr"], 6.386975579211021)
+
     def test_render_has_detail_panels(self):
         ctx = build_context(self.ins, self.raw, None, self.s)
         html = render_monthly(ctx)

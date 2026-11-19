@@ -21,7 +21,7 @@ if "monthly_reports" not in st.session_state:
 
 # 업로드 데이터는 서버 메모리에만 잠시 캐시 (1시간)
 # 읽는 방식(read_insight)이 바뀌면 이 숫자를 올린다 — 재배포 후에도 예전 형식의 캐시가 쓰이지 않게
-INSIGHT_PARSER_VER = 2
+INSIGHT_PARSER_VER = 3   # 3: 로켓배송(서플라이어 허브) 상품별 판매 CSV/엑셀 지원
 @st.cache_data(show_spinner="판매 데이터를 읽는 중…", ttl=3600, max_entries=16)
 def _insight(files: tuple, parser_ver: int) -> InsightData:
     ins = InsightData()
@@ -67,9 +67,10 @@ def make_tab():
     st.subheader("① 원본 데이터")
     u1, u2 = st.columns(2)
     ins_files = u1.file_uploader(
-        "비즈니스 인사이트 (월별 파일 여러 개)", type=["xlsx"], accept_multiple_files=True, key="m_ins",
+        "비즈니스 인사이트 (월별 파일 여러 개)", type=["xlsx", "csv"], accept_multiple_files=True, key="m_ins",
         help="Wing › 비즈니스 인사이트에서 월별로 내려받은 파일. '기간별 판매량'(일별)과 '상품별 판매량'(옵션별) 시트를 자동으로 찾습니다. "
-             "상품별 판매량만 따로 받은 파일도 함께 올리면 일별 합계와 맞는 쪽을 자동으로 고릅니다.")
+             "상품별 판매량만 따로 받은 파일도 함께 올리면 일별 합계와 맞는 쪽을 자동으로 고릅니다. "
+             "로켓배송(서플라이어 허브) '상품별 판매' CSV·엑셀도 올릴 수 있습니다 — 파일명에 'n월'을 넣어주세요.")
     raw_files = u2.file_uploader(
         "광고 raw (선택 · 여러 개)", type=["xlsx", "xlsm"], accept_multiple_files=True, key="m_raw",
         help="광고센터 일자별·옵션별 보고서 또는 광고보고서 xlsm('raw' 시트). 급변 상품의 광고 상태·광고비, 광고 합계 빈 날 보정에 씁니다. "
@@ -104,7 +105,11 @@ def make_tab():
             st.warning(str(e))
 
     if not ins.daily:
-        st.error("'기간별 판매량'(일별) 시트가 있는 파일이 없습니다.")
+        msg = "'기간별 판매량'(일별) 시트가 있는 파일이 없습니다."
+        if ins.options:
+            msg += (f" 상품별 판매 파일 {len(ins.options)}개는 읽었지만, 월별 매출·방문자·전환율 추이를 만들려면 "
+                    "날짜별 판매 파일(Wing '기간별 판매량' 또는 서플라이어 허브 일별 판매)이 함께 있어야 합니다.")
+        st.error(msg)
         return
     auto_cut = max(d for d, v in ins.daily.items() if v["vis"] > 0)
     c1, c2 = st.columns([1, 2])
