@@ -195,6 +195,9 @@ def make_tab():
         st.session_state.m_head_sub = ctx["auto_headline_sub"]
     ctx["headline"] = st.text_input("핵심 한 줄", key="m_head")
     ctx["headline_sub"] = st.text_input("보조 설명", key="m_head_sub")
+    extra = st.text_area("매출 구성 코멘트 (선택 · ① 자연매출 vs 광고전환매출 아래에 강조해서 표시)", key=f"m_comp_extra::{account}",
+                         height=90, help="한 줄에 한 문장. <b>굵게</b> 태그를 쓸 수 있습니다. 예: 판매손익 검증 결과, 원인 해석")
+    ctx["comp_extra"] = [x.strip() for x in extra.splitlines() if x.strip()]
 
     # ---------------- 생성 ----------------
     st.divider()

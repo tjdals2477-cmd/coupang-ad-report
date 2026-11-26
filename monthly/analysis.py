@@ -786,7 +786,7 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
             "headline": s.headline or headline, "headline_sub": s.headline_sub or sub,
             "auto_headline": headline, "auto_headline_sub": sub,
             "movers": mover_sets, "ad": ad, "checks": checks, "camp_months": camp_months, "cats": cats,
-            "period_label": period_label, "recent": recent, "L": words, "comp_note": comp_insight(months)}
+            "period_label": period_label, "recent": recent, "L": words, "comp_note": comp_insight(months), "comp_extra": []}
 
 
 def comp_insight(months: list[dict]) -> list[str]:

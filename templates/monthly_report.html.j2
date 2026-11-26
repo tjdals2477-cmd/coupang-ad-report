@@ -233,7 +233,7 @@
           </tr>
           {%- endfor %}
         </table>
-        {%- if comp_note %}<div class="note" style="margin-top:12px;line-height:1.7">{% for line in comp_note %}{% if loop.last %}<span style="color:#94a3b8;font-size:11.5px">{{ line }}</span>{% else %}{{ line|safe }}<br>{% endif %}{% endfor %}</div>{% endif %}
+        {%- if comp_note or comp_extra %}<div class="note" style="margin-top:12px;line-height:1.7">{% for line in comp_extra or [] %}<span style="display:block;border-left:3px solid #6366f1;padding-left:8px;margin-bottom:6px">{{ line|safe }}</span>{% endfor %}{% for line in comp_note %}{% if loop.last %}<span style="color:#94a3b8;font-size:11.5px">{{ line }}</span>{% else %}{{ line|safe }}<br>{% endif %}{% endfor %}</div>{% endif %}
       </div>
     </div>
   </div>
