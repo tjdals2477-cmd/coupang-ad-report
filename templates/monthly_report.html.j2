@@ -233,7 +233,7 @@
           </tr>
           {%- endfor %}
         </table>
-        <div class="note" style="margin-top:12px;">자연매출은 <b>채널별 판매현황과 같은 기준</b>입니다. 상품마다 <b>매출 − 그 상품 광고의 직접 전환매출(14일)</b>을 구해 더하고, 광고 전환매출이 그 상품 실제 매출보다 크면 실제 매출까지만 뺍니다. 다른 상품 광고를 타고 들어와 산 간접 전환은 그 상품 입장에서는 광고 없이 팔린 것으로 봅니다. 회색 줄은 간접 전환까지 뺀 값(가장 보수적인 하한)입니다. 광고전환매출 = 총매출 − 자연매출. '옛 방식' 표시는 직접 전환 데이터가 없어 총매출 − 광고 전환매출 전체로 계산한 경우입니다.</div>
+        {%- if comp_note %}<div class="note" style="margin-top:12px;line-height:1.7">{% for line in comp_note %}{% if loop.last %}<span style="color:#94a3b8;font-size:11.5px">{{ line }}</span>{% else %}{{ line|safe }}<br>{% endif %}{% endfor %}</div>{% endif %}
       </div>
     </div>
   </div>

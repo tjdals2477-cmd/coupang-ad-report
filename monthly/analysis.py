@@ -786,7 +786,40 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
             "headline": s.headline or headline, "headline_sub": s.headline_sub or sub,
             "auto_headline": headline, "auto_headline_sub": sub,
             "movers": mover_sets, "ad": ad, "checks": checks, "camp_months": camp_months, "cats": cats,
-            "period_label": period_label, "recent": recent, "L": words}
+            "period_label": period_label, "recent": recent, "L": words, "comp_note": comp_insight(months)}
+
+
+def comp_insight(months: list[dict]) -> list[str]:
+    """① 매출 구성 해설 2~3줄: 자연 비중 변화 → 매출 증감을 광고 직접 전환·자연매출로 분해 → 기준 한 줄."""
+    ts = [t for t in months if t["ad_ok"] and t.get("natural") is not None and t["rev"]]
+    if not ts:
+        return []
+    b = ts[-1]
+    sh = lambda t: t["natural"] / t["rev"] * 100
+    adr = lambda t: t["rev"] - t["natural"]
+    sgn = lambda v: ("+" if v >= 0 else "−") + man(abs(v)) + "원"
+    out = []
+    if len(ts) >= 2:
+        a = ts[-2]
+        dp = round(sh(b), 1) - round(sh(a), 1)   # 표에 보이는 비중끼리의 차이
+        word = "광고 의존도가 높아졌습니다" if dp < -1 else "자연 판매 비중이 커졌습니다" if dp > 1 else "매출 구성은 비슷합니다"
+        out.append(f"자연 비중 <b>{sh(a):.1f}% → {sh(b):.1f}%</b>({dp:+.1f}%p) — {word}.".replace("(-", "(−"))
+        per = a["days"] != b["days"] and a["days"] and b["days"]
+        f = (lambda t, v: v / t["days"]) if per else (lambda t, v: v)
+        dr, dn, dd = f(b, b["rev"]) - f(a, a["rev"]), f(b, b["natural"]) - f(a, a["natural"]), f(b, adr(b)) - f(a, adr(a))
+        unit = "일평균 " if per else ""
+        nat_g = (f(b, b["natural"]) / f(a, a["natural"]) - 1) * 100 if a["natural"] else 0
+        if dr > 0 and dd > 0:
+            out.append(f"{unit}매출 {sgn(dr)} 중 <b>{dd / dr * 100:.0f}%({sgn(dd)})를 광고 직접 전환</b>이 만들었고, 자연매출은 {sgn(dn)}({nat_g:+.1f}%)입니다.")
+        elif dr < 0:
+            out.append(f"{unit}매출 {sgn(dr)} — 광고 직접 전환 {sgn(dd)}, 자연매출 {sgn(dn)}({nat_g:+.1f}%)입니다.")
+        else:
+            out.append(f"{unit}매출 {sgn(dr)} — 광고 직접 전환 {sgn(dd)}, 자연매출 {sgn(dn)}({nat_g:+.1f}%)입니다.")
+    else:
+        out.append(f"자연 비중 <b>{sh(b):.1f}%</b> — 매출의 {100 - sh(b):.1f}%가 그 상품 광고의 직접 전환입니다.")
+    out.append("자연매출 = 상품별 매출 − 그 상품 광고 직접 전환(14일) · 회색 줄은 간접 전환까지 뺀 하한" if b.get("nat_basis") == "direct"
+               else "자연매출 = 총매출 − 광고 전환매출 전체(옛 방식, 직접 전환 데이터 없음)")
+    return out
 
 
 def auto_headline(months, same, weeks, word, recent: bool = False) -> tuple[str, str]:

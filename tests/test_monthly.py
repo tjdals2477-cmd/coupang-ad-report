@@ -439,6 +439,8 @@ class FilePeriodTest(unittest.TestCase):
         self.assertNotIn("광고 합계 데이터가 부족", msgs)
         self.assertEqual(ctx["kpis"][0]["delta"]["value"], 20.0)   # 1,400만 → 1,680만
         self.assertTrue(ctx["movers"])
+        self.assertEqual(len(ctx["comp_note"]), 3)                 # ① 매출 구성 해설: 비중 변화 · 증감 분해 · 기준
+        self.assertIn("자연 비중", ctx["comp_note"][0])
 
     def test_month_mode_forced(self):
         ctx = self._build("month")
