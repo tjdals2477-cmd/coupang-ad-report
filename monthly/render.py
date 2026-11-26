@@ -112,11 +112,14 @@ def render_monthly_summary(datas: list[dict], title: str) -> str:
         qty = sum(t["qty"] for t in tf) if all(t.get("qty") is not None for t in tf) else None
         rev = sum(t["rev"] for t in ts)
         cost, adrev = sum(t["cost"] for t in ts), sum(t["adrev"] for t in ts)
+        nat_direct = all(t.get("nat_basis") == "direct" for t in ts)
+        natural = sum(t["natural"] for t in ts) if ad_ok and nat_direct else (rev - adrev if ad_ok else None)
         months.append({"short": short, "label": ts[0]["label"], "tag": ts[0].get("tag", ts[0]["label"]), "partial": ts[0]["partial"],
                        "rev": rev, "vis": vis, "qty": qty, "cvr": _sum_cvr(tf),
                        "cost": cost if ad_ok else None, "adrev": adrev if ad_ok else None,
                        "ad_ratio": cost / rev * 100 if ad_ok and rev else None,
-                       "ad_share": adrev / rev * 100 if ad_ok and rev else None, "n": len(ts)})
+                       "ad_share": (rev - natural) / rev * 100 if ad_ok and rev else None, "n": len(ts),
+                       "natural": natural, "nat_basis": "direct" if nat_direct else "total"})
     last, prev = months[-1], (months[-2] if len(months) >= 2 else None)
     sames = [d.get("same") for d in datas]
     same_rev = sum(x["rev"] for x in sames) if all(sames) else None
@@ -134,7 +137,8 @@ def render_monthly_summary(datas: list[dict], title: str) -> str:
                      "rev_d": delta(t["rev"], base["rev"]) if base else None,
                      "cost": won(t["cost"]) if t["ad_ok"] else "-",
                      "ratio": pct(t["cost"] / t["rev"] * 100, 1) if t["ad_ok"] and t["rev"] else "-",
-                     "share": pct(100 - t["adrev"] / t["rev"] * 100, 0) if t["ad_ok"] and t["rev"] else "-",
+                     "share": pct((t["natural"] if t.get("nat_basis") == "direct" else t["rev"] - t["adrev"]) / t["rev"] * 100, 0)
+                              if t["ad_ok"] and t["rev"] else "-",
                      "vis": "-" if _ad_only(d) else f"{t['vis']:,.0f}",
                      "cvr": ("-" if not _has_sales(d) else pct(t["cvr"], 2) + " (광고)") if _ad_only(d) else pct(t["cvr"], 2),
                      "trend": d.get("trend_word", "-"),

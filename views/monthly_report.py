@@ -160,9 +160,14 @@ def make_tab():
     pairs = [tuple(x.strip() for x in line.split(",")[:2]) for line in pairs_txt.splitlines()
              if line.count(",") >= 1 and all(x.strip().isdigit() for x in line.split(",")[:2])]
 
+    pm_opts = {"자동": "auto", "월 단위": "month", "파일 기간 단위 (2주 등)": "file"}
+    pm = st.radio("비교 단위", list(pm_opts), horizontal=True, key=f"m_pmode::{account}",
+                  help="자동: 상품별 판매 파일명이 '10월 29일-11월 11일'처럼 달력 월이 아닌 기간이면 그 기간끼리 비교합니다. "
+                       "파일명에 기간이 없으면 월 단위로 비교합니다.")
     s = MonthlySettings(account=account or "계정", written=written, cutoff=cutoff, min_diff=float(min_diff),
                         min_pct=float(min_pct), shift_min=float(shift_min), shift_ratio=shift_ratio / 100,
-                        recent_days=int(recent), manual_ads=manual, channel_pairs=pairs)
+                        recent_days=int(recent), manual_ads=manual, channel_pairs=pairs,
+                        period_mode=pm_opts[pm])
     try:
         ctx = build_context(ins, raw, dash, s)
     except ValueError as e:
@@ -172,7 +177,7 @@ def make_tab():
     # ---------------- 점검 ----------------
     st.subheader("③ 데이터 점검")
     for level, text in ctx["checks"]:
-        (st.warning if level == "warn" else st.caption)(("⚠️ " if level == "warn" else "ℹ️ ") + text)
+        (st.warning if level == "warn" else st.caption)(("⚠️ " if level == "warn" else "ℹ️ ") + text.replace("~", r"\~"))  # '~' 두 개가 취소선으로 바뀌지 않게
     if not ctx["checks"]:
         st.caption("✅ 확인할 사항이 없습니다.")
     m = st.columns(len(ctx["kpis"]))

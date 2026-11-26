@@ -216,18 +216,24 @@
       </div>
       <div class="table-wrap">
         <table class="mini-table">
-          <tr><th>{{ L.unit }}</th><th>총매출</th><th>광고전환매출</th><th>자연매출</th><th>자연 비중</th></tr>
+          <tr><th>{{ L.unit }}</th><th>총매출</th><th>광고전환매출<br><span style="font-weight:400;font-size:11px">직접 전환</span></th><th>자연매출<br><span style="font-weight:400;font-size:11px">아래 줄은 간접 전환 제외 시</span></th><th>자연 비중</th></tr>
           {%- for t in months %}
           <tr>
             <td><b>{{ t.label }}</b></td>
             <td>{{ '{:,.0f}'.format(t.rev) }}</td>
             {%- if t.ad_ok %}
-            <td>{{ '{:,.0f}'.format(t.adrev) }}</td><td>{{ '{:,.0f}'.format(t.natural) }}</td><td><b>{{ '%.1f'|format(100 - t.ad_share) }}%</b></td>
+            {%- if t.nat_basis == 'direct' %}
+            <td>{{ '{:,.0f}'.format(t.adrev_d) }}</td>
+            <td>{{ '{:,.0f}'.format(t.natural) }}<br><span style="font-size:11px;color:#94a3b8">{{ '{:,.0f}'.format(t.natural_all) }} ({{ '%.1f'|format(t.natural_all / t.rev * 100 if t.rev else 0) }}%)</span></td>
+            <td><b>{{ '%.1f'|format(100 - t.ad_share) }}%</b></td>
+            {%- else %}
+            <td>{{ '{:,.0f}'.format(t.adrev) }}</td><td>{{ '{:,.0f}'.format(t.natural) }}<br><span style="font-size:11px;color:#94a3b8">옛 방식</span></td><td><b>{{ '%.1f'|format(100 - t.ad_share) }}%</b></td>
+            {%- endif %}
             {%- else %}<td colspan="3" class="pending">광고 데이터 부족</td>{% endif %}
           </tr>
           {%- endfor %}
         </table>
-        <div class="note" style="margin-top:12px;">자연매출 = 총매출 − 광고전환매출(14일). 쿠팡 광고전환매출은 <b>할인쿠폰 적용 전 가격</b>으로 집계되고 광고 클릭 후 다른 상품 구매(간접전환)까지 포함해 실제보다 크게 잡히므로, 자연매출은 보수적인(낮은) 추정치입니다. {{ L.unit }}별 비교(추이)로 보세요.</div>
+        <div class="note" style="margin-top:12px;">자연매출은 <b>채널별 판매현황과 같은 기준</b>입니다. 상품마다 <b>매출 − 그 상품 광고의 직접 전환매출(14일)</b>을 구해 더하고, 광고 전환매출이 그 상품 실제 매출보다 크면 실제 매출까지만 뺍니다. 다른 상품 광고를 타고 들어와 산 간접 전환은 그 상품 입장에서는 광고 없이 팔린 것으로 봅니다. 회색 줄은 간접 전환까지 뺀 값(가장 보수적인 하한)입니다. 광고전환매출 = 총매출 − 자연매출. '옛 방식' 표시는 직접 전환 데이터가 없어 총매출 − 광고 전환매출 전체로 계산한 경우입니다.</div>
       </div>
     </div>
   </div>
@@ -346,7 +352,7 @@
     <ul class="defs">
       <li><b>총매출</b> — 쿠팡 Wing 비즈니스 인사이트 매출(취소 차감 후)</li>
       <li><b>매출 대비 광고비 비율</b> — 광고비 ÷ 총매출 × 100 (낮을수록 효율적)</li>
-      <li><b>자연매출</b> — 총매출 − 광고전환매출(14일 기준). 광고전환매출이 쿠폰 적용 전 가격이라 낮게 추정됨</li>
+      <li><b>자연매출</b> — 상품별 (매출 − 그 상품 광고의 직접 전환매출 14일)의 합. 채널별 판매현황과 같은 기준으로 상품별 광고 의존도를 봅니다. 간접 전환까지 뺀 값은 보조로 표시</li>
       <li><b>구매전환율</b> — 주문 ÷ 조회 (쿠팡 Wing·서플라이어 허브 화면과 같은 정의)</li>
       <li>{{ L.def_compare|safe }}</li>
       <li><b>채널 이동</b> — 옵션명이 같고 판매방식만 다른 옵션이 반대로 움직이면 이동으로 판단</li>

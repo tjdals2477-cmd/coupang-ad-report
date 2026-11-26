@@ -25,6 +25,7 @@ class MonthlySettings:
     recent_days: int = 7              # 광고 상태: 광고 raw 마지막 N일 광고비 > 0 → 집행중
     manual_ads: list = field(default_factory=list)     # [(date, 광고비, 광고전환매출)] 대시보드 누락 보정
     channel_pairs: list = field(default_factory=list)  # [(옵션ID, 옵션ID)] 옵션명이 달라 자동 매칭 안 되는 쌍
+    period_mode: str = "auto"         # auto: 상품별 파일이 2주 등 기간 단위면 그 기간끼리 비교 · month: 월 단위 · file: 파일 기간 단위
     headline: str | None = None       # 포커스 배너 문구 (None이면 자동)
     headline_sub: str | None = None
 
@@ -43,6 +44,37 @@ def man(v: float) -> str:
 
 
 # ---------------- 기간 집계 ----------------
+
+def file_periods(options: list, daily_dates, cutoff: date) -> list[tuple[date, date]]:
+    """상품별 판매 파일명의 기간(예: 10월 29일-11월 11일)을 판매 데이터 연도로 확정해 겹치지 않는 기간 목록으로."""
+    years = {}
+    for d in sorted(daily_dates):
+        years.setdefault(d.month, d.year)
+    out = set()
+    for o in options:
+        if not o.md:
+            continue
+        m1, d1, m2, d2 = o.md
+        y1 = years.get(m1, max(years.values()) if years else date.today().year)
+        try:
+            o.s, o.e = date(y1, m1, d1), date(y1 + (1 if m2 < m1 else 0), m2, d2)
+        except ValueError:
+            o.s = o.e = None
+            continue
+        if o.s <= cutoff:
+            out.add((o.s, min(o.e, cutoff)))
+    L = sorted(out)
+    return [p for i, p in enumerate(L) if i == 0 or p[0] > L[i - 1][1]]   # 겹치는 기간은 앞의 것만
+
+
+def use_file_periods(per: list, mode: str, cutoff: date) -> bool:
+    if mode == "month" or len(per) < 2:
+        return False
+    if mode == "file":
+        return True
+    # 자동: 파일 기간 중 하나라도 달력 월(1일~말일, 진행 중인 달은 1일~집계 마지막 날)이 아니면 기간 단위로 비교
+    is_month = lambda s, e: s.day == 1 and s.month == e.month and (e == _month_end(e.year, e.month) or e == cutoff)
+    return any(not is_month(s, e) for s, e in per)
 
 def resolve_periods(raw: AdRaw | None, daily_dates, cutoff: date | None = None) -> None:
     """기간 합계 광고 파일의 시작·종료일 확정 (이미 정해진 건 유지). 연도는 판매 데이터에서 해당 월이 있는 해.
@@ -127,10 +159,49 @@ def period(daily: dict, ad_rows: list, s: date, e: date) -> dict:
     t["adrev"] = sum(a["adrev"] for a in rows)
     t["ad_missing"] = [d for d in days if d not in covered]
     t["ad_filled"] = [(a["s"], a["e"], a["src"]) for a in rows if a["src"] != "대시보드"]
-    t["natural"] = t["rev"] - t["adrev"] if t["ad_ok"] else None
+    t["natural"] = t["rev"] - t["adrev"] if t["ad_ok"] else None   # 상품별 데이터가 있으면 build_context에서 판매현황 기준으로 바꿈
+    t["nat_basis"] = "total" if t["ad_ok"] else None
     t["ad_ratio"] = t["cost"] / t["rev"] * 100 if t["ad_ok"] and t["rev"] else None
     t["ad_share"] = t["adrev"] / t["rev"] * 100 if t["ad_ok"] and t["rev"] else None
     return t
+
+
+# ---------------- 자연매출 (판매현황과 같은 기준) ----------------
+
+def direct_by_option(raw: AdRaw | None, s: date, e: date) -> tuple[dict, dict, float]:
+    """기간 안 옵션별 (직접 전환매출, 전체 전환매출)과 그 데이터가 덮는 일수 비율.
+    직접 전환매출 열이 없는 날·파일은 덮지 않은 것으로 본다(옛 방식으로 대체)."""
+    d_opt, a_opt, cov = {}, {}, set()
+    if not raw:
+        return d_opt, a_opt, 0.0
+    inside = [p for p in active_periods(raw, total_only=True) if p.s >= s and p.e <= e and p.has_direct]
+    pdays = {d for p in inside for d in _days(p.s, p.e)}
+    for p in inside:
+        for oid, v in p.opt.items():
+            d_opt[oid] = d_opt.get(oid, 0) + (v[2] if len(v) > 2 else 0)
+            a_opt[oid] = a_opt.get(oid, 0) + v[1]
+    cov |= pdays
+    for d, items in raw.by_day.items():
+        if not (s <= d <= e) or d in pdays or not items or any(len(x) < 4 or x[3] is None for x in items):
+            continue
+        cov.add(d)
+        for oid, _, rev, rev_d in items:
+            d_opt[oid] = d_opt.get(oid, 0) + rev_d
+            a_opt[oid] = a_opt.get(oid, 0) + rev
+    days = (e - s).days + 1
+    return d_opt, a_opt, len(cov) / days if days else 0.0
+
+
+def natural_split(rows: dict, d_opt: dict, a_opt: dict) -> tuple[float, float, float]:
+    """상품별 판매 시트 기준 (직접 전환만 뺀 자연매출, 간접까지 뺀 자연매출, 시트 매출 합계).
+    상품마다 광고 전환매출을 그 상품 실제 매출까지만 인정해서 뺀다 — 판매현황 '자연매출'과 같은 식."""
+    nat = nat_all = tot = 0.0
+    for oid, r in rows.items():
+        rev = max(0.0, r["rev"])
+        tot += r["rev"]
+        nat += rev - min(d_opt.get(oid, 0.0), rev)
+        nat_all += rev - min(a_opt.get(oid, 0.0), rev)
+    return nat, nat_all, tot
 
 
 # ---------------- 옵션 · 채널 · 광고 ----------------
@@ -175,7 +246,7 @@ def ad_context(raw: AdRaw | None, cutoff: date, recent_days: int) -> dict:
         for d, items in raw.by_day.items():
             if d > cutoff:
                 continue
-            for oid, c, _ in items:
+            for oid, c, *_ in items:
                 opt_cost[(oid, d)] = opt_cost.get((oid, d), 0) + c
     periods = [p for p in active_periods(raw) if p.s <= cutoff]
     dated_days = sorted({d for _, d in opt_cost})
@@ -484,7 +555,14 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
     ad_rows = build_ad_rows(dash, s.manual_ads, raw, cutoff)
 
     months = []
-    for y, m in sorted({(d.year, d.month) for d in daily}):
+    fper = file_periods(ins.options, daily, cutoff)
+    by_file = use_file_periods(fper, s.period_mode, cutoff)
+    for i, (ps, pe) in enumerate(fper if by_file else []):
+        t = period(daily, ad_rows, ps, pe)
+        lab = f"{ps.month}/{ps.day}~{pe.month}/{pe.day}"
+        t.update(y=ps.year, m=900 + i, partial=False, month_days=t["days"], gap=True, label=lab, short=lab, tag=lab)
+        months.append(t)
+    for y, m in ([] if by_file else sorted({(d.year, d.month) for d in daily})):
         start, end = date(y, m, 1), min(_month_end(y, m), cutoff)
         partial = end < _month_end(y, m)
         t = period(daily, ad_rows, start, end)
@@ -501,14 +579,14 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
 
     # 진행 중인 달은 직전 달 같은 일수와 비교
     same = None
-    if prev and last["partial"]:
+    if prev and last["partial"] and not by_file:
         pe = min(date(prev["y"], prev["m"], 1) + timedelta(last["e"].day - 1), prev["e"])
         same = period(daily, ad_rows, date(prev["y"], prev["m"], 1), pe)
         same["label"] = f"{prev['m']}월 동기간(1~{pe.day}일)"
         if same["days"] == 0:  # 직전 달은 일부 기간만 올림 → 직전 기간 비교
             same = None
     # 직전 기간 비교: 진행 중인 달을 바로 앞 같은 일수(예: 10/17~31)와 비교하려고 직전 달을 일부만 올린 경우
-    recent = bool(prev and last["partial"] and same is None and prev.get("gap"))
+    recent = bool(prev and (by_file or (last["partial"] and same is None and prev.get("gap"))))
     prev_name = prev["tag"] if prev and prev.get("gap") else (prev["short"] if prev else "")
 
     def cmp(key, kind="pct", per_day=False):
@@ -518,7 +596,7 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
         if key in ("cost",):
             if not (last["ad_ok"] and prev["ad_ok"]):
                 return None, "광고 데이터 부족"
-            if last["partial"] and not (recent and prev["days"] == last["days"]):
+            if (last["partial"] or by_file) and not (recent and prev["days"] == last["days"]):
                 return delta(last["cost"] / last["days"], prev["cost"] / prev["days"]), f"일평균 기준, {prev_name} 대비"
             return delta(last["cost"], prev["cost"]), f"{prev_name} 대비"
         if key == "ad_ratio":
@@ -556,16 +634,26 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
         how = ("같은 일수라 합계로 비교합니다." if prev["days"] == last["days"]
                else f"일수가 달라({prev['days']}일 vs {last['days']}일) 매출·판매량은 일평균으로 비교합니다.")
         checks.append(("info", f"{last['tag']}를 직전 기간 {prev['tag']}({prev['days']}일)과 비교합니다. {how}"))
-    for t in months[:-2] if recent else months[:-1]:
+    if by_file:
+        checks.append(("info", f"상품별 판매 파일이 기간 단위라 달력 월 대신 파일 기간({', '.join(t['tag'] for t in months)})끼리 비교합니다."))
+    for t in [] if by_file else (months[:-2] if recent else months[:-1]):
         if t.get("gap"):
             checks.append(("info", f"{t['short']}는 {t['tag']} 데이터만 있어 그 기간 합계로 표시합니다."))
     for t in months:
-        cands = [o for o in ins.options if o.month == t["m"]]
+        cands = ([o for o in ins.options if o.s and o.s == t["s"] and o.e >= t["e"]] if by_file
+                 else [o for o in ins.options if o.month == t["m"]])
         best, gap = pick_option_sheet(cands, t["rev"])
         if best is None:
             checks.append(("warn", f"{t['short']} 상품별 판매량이 없어 이 달이 포함된 급변 옵션 분석을 건너뜁니다."))
             continue
         option_by_month[t["m"]] = (best, gap)
+        if t["ad_ok"] and not best.partial and best.total > 0:
+            d_opt, a_opt, cov = direct_by_option(raw, t["s"], t["e"])
+            if cov >= 0.9:
+                nat, nat_all, tot = natural_split(best.rows, d_opt, a_opt)
+                k = t["rev"] / tot  # 상품별 시트를 일별 매출 합계에 맞춤
+                t.update(natural=nat * k, natural_all=nat_all * k, adrev_d=t["rev"] - nat * k,
+                         ad_share=(t["rev"] - nat * k) / t["rev"] * 100 if t["rev"] else None, nat_basis="direct")
         tol = 10 if t["partial"] else 2  # 진행 중인 달은 당일 부분집계가 섞일 수 있음
         if best.partial:
             checks.append(("info", f"{t['short']} 상품별 데이터는 상위 상품만 담긴 시트({best.source})라 급변 상품도 그 범위 안에서만 비교합니다."))
@@ -623,6 +711,10 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
                            "gaps": ad["gaps"](ta["s"], tb["e"]) if ad["has"] else []})
 
     # 데이터 점검
+    old = [t["short"] for t in months if t["ad_ok"] and t.get("nat_basis") != "direct"]
+    if old:
+        checks.append(("info", f"{', '.join(old)} 자연매출은 광고 리포트에 '직접 전환매출액(14일)' 열이나 상품별 판매 시트가 없어 "
+                               "옛 방식(총매출 − 광고 전환매출 전체)으로 계산했습니다. 판매현황 기준보다 낮게 나옵니다."))
     for t in months:
         if not t["ad_ok"]:
             checks.append(("warn", f"{t['short']} 광고 합계 데이터가 부족해(커버 {t['addays']}/{t['days']}일) 광고 지표를 비워둡니다."))
@@ -726,7 +818,8 @@ def auto_headline(months, same, weeks, word, recent: bool = False) -> tuple[str,
 
 def report_data(ctx: dict) -> dict:
     """통합 탭용 요약 수치 (보고서 HTML에 내장)."""
-    keep = ("rev", "vis", "qty", "view", "ord", "cvr", "cost", "adrev", "ad_ok", "days", "partial", "label", "short", "tag", "m")
+    keep = ("rev", "vis", "qty", "view", "ord", "cvr", "cost", "adrev", "ad_ok", "days", "partial", "label", "short", "tag", "m",
+            "natural", "natural_all", "nat_basis")
     def slim(t):
         return {k: t[k] for k in keep if k in t} | {"cvr_w": t["cvr"] * t["vis"]}
     return {"kind": "monthly", "version": 1, "account": ctx["s"].account,

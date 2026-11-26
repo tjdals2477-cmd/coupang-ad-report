@@ -361,5 +361,89 @@ class MonthlyTest(unittest.TestCase):
         self.assertNotIn("</script><", merged.split('id="embedded-reports"')[1][:200])
 
 
+class NaturalSalesTest(unittest.TestCase):
+    """자연매출: 채널별 판매현황과 같은 기준(상품별 매출 − 그 상품 광고 직접 전환매출, 실제 매출까지만)."""
+
+    def _ins(self):
+        ins = InsightData()
+        octo = [("4", "기타", "판매자배송", 9_000_000), ("2", "평판등", "로켓그로스", 1_000_000)]
+        read_insight(month_file(2026, 10, 10, 1_000_000, octo), "A_10월.xlsx", ins)
+        return ins
+
+    def test_direct_basis(self):
+        hdr = ["날짜", "캠페인", "광고집행 옵션ID", "광고비", "총 전환매출액(14일)", "직접 전환매출액(14일)"]
+        body = []
+        for i in range(10):
+            d = date(2026, 10, 1) + timedelta(i)
+            body.append([d, "c", "4", 50_000, 300_000, 200_000])   # 옵션4: 직접 200만 · 간접 100만 (10일)
+            body.append([d, "c", "9", 10_000, 50_000, 50_000])     # 팔리지 않은 옵션의 전환 → 실제 매출 0이라 빼지 않음
+        raw = read_ad_raw(xlsx({"raw": [hdr] + body}), "raw.xlsx", AdRaw())
+        t = build_context(self._ins(), raw, None, MonthlySettings(account="t"))["last"]
+        self.assertEqual(t["nat_basis"], "direct")
+        self.assertAlmostEqual(t["natural"], 8_000_000)       # (900만 − 200만) + 100만
+        self.assertAlmostEqual(t["natural_all"], 7_000_000)   # (900만 − 300만) + 100만
+        self.assertAlmostEqual(t["ad_share"], 20.0)
+        self.assertAlmostEqual(t["adrev"], 3_500_000)         # 광고 합계(광고비·ROAS용)는 그대로
+
+    def test_direct_from_conversion_option(self):
+        hdr = ["날짜", "캠페인", "광고집행 옵션ID", "광고전환매출발생 옵션ID", "광고비", "총 전환매출액(14일)"]
+        body = []
+        for i in range(10):
+            d = date(2026, 10, 1) + timedelta(i)
+            body += [[d, "c", "4", "4", 50_000, 200_000], [d, "c", "4", "2", 0, 100_000]]   # 같은 옵션 = 직접
+        raw = read_ad_raw(xlsx({"raw": [hdr] + body}), "raw.xlsx", AdRaw())
+        t = build_context(self._ins(), raw, None, MonthlySettings(account="t"))["last"]
+        self.assertEqual(t["nat_basis"], "direct")
+        self.assertAlmostEqual(t["natural"], 8_000_000)
+
+    def test_fallback_without_direct_column(self):
+        rows = [(date(2026, 10, 1) + timedelta(i), "4", 50_000, 300_000) for i in range(10)]
+        raw = read_ad_raw(ad_raw_file(rows), "raw.xlsx", AdRaw())
+        ctx = build_context(self._ins(), raw, None, MonthlySettings(account="t"))
+        self.assertEqual(ctx["last"]["nat_basis"], "total")
+        self.assertAlmostEqual(ctx["last"]["natural"], 7_000_000)   # 1,000만 − 300만
+        self.assertTrue(any("옛 방식" in m for _, m in ctx["checks"]))
+
+
+class FilePeriodTest(unittest.TestCase):
+    """상품별 판매·광고 파일이 2주 단위(10/29~11/11 · 11/12~25)일 때 달력 월 대신 파일 기간끼리 비교."""
+
+    def _build(self, mode="auto"):
+        ins = InsightData()
+        daily = [DAILY_HDR] + [[(date(2026, 10, 29) + timedelta(i)).isoformat(), "1000", "0", "0", "40", "4.00%", "0",
+                                "1000000" if i < 14 else "1200000"] for i in range(28)]
+        read_insight(xlsx({"기간별 판매량": daily}), "고네오_기간별 판매_10월 29일-11월 25일.xlsx", ins)
+        a = [("1", "스위치", "로켓그로스", 10_000_000), ("2", "콘센트", "로켓그로스", 4_000_000)]
+        b = [("1", "스위치", "로켓그로스", 14_000_000), ("2", "콘센트", "로켓그로스", 2_800_000)]
+        for name, opts in [("고네오_상품별 판매_10월 29일- 11월 11일.xlsx", a), ("고네오_상품별 판매_11월 12일-25일.xlsx", b)]:
+            rows = [OPT_HDR] + [[o[0], o[1], o[1], "", "가구", o[2], str(o[3]), "1", "1", "10"] for o in opts]
+            read_insight(xlsx({"상품별 판매량": rows}), name, ins)
+        hdr = ["캠페인", "광고집행 옵션ID", "광고비", "총 전환매출액(14일)", "직접 전환매출액(14일)"]
+        raw = AdRaw()
+        for name, cost in [("고네오_광고_10월 29일-11월 11일.xlsx", 1_000_000), ("고네오_광고_11월 12일-25일.xlsx", 1_500_000)]:
+            body = [["c1", "1", cost, cost * 5, cost * 4], ["c2", "2", 1000, 0, 0]]
+            read_ad_raw(xlsx({"raw": [hdr] + body}), name, raw)
+        return build_context(ins, raw, None, MonthlySettings(account="고네오", period_mode=mode))
+
+    def test_two_week_periods(self):
+        ctx = self._build()
+        a, b = ctx["months"]
+        self.assertEqual((a["tag"], b["tag"]), ("10/29~11/11", "11/12~11/25"))
+        self.assertEqual((a["rev"], b["rev"]), (14_000_000, 16_800_000))
+        self.assertTrue(a["ad_ok"] and b["ad_ok"])
+        self.assertEqual(b["cost"], 1_501_000)
+        self.assertEqual(b["nat_basis"], "direct")
+        self.assertTrue(ctx["recent"])
+        msgs = " ".join(m for _, m in ctx["checks"])
+        self.assertNotIn("차이 납니다", msgs)           # 상품별 합계가 기간 매출과 맞음
+        self.assertNotIn("광고 합계 데이터가 부족", msgs)
+        self.assertEqual(ctx["kpis"][0]["delta"]["value"], 20.0)   # 1,400만 → 1,680만
+        self.assertTrue(ctx["movers"])
+
+    def test_month_mode_forced(self):
+        ctx = self._build("month")
+        self.assertEqual([t["short"] for t in ctx["months"]], ["10월", "11월"])
+
+
 if __name__ == "__main__":
     unittest.main()

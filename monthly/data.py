@@ -114,6 +114,9 @@ class OptionSheet:
     month: int | None
     rows: dict             # {옵션ID: {name, ch, cat, rev, vis, ord, qty}}
     partial: bool = False  # 시트명에 'TOP'이 있으면 상위 상품만 담긴 시트 (합계 대조·전체 비교 불가)
+    md: tuple | None = None  # 파일명 기간 (시작월, 시작일, 종료월, 종료일) — 2주 단위 등 기간 비교용
+    s: date | None = None    # md를 판매 데이터 연도로 확정한 기간
+    e: date | None = None
 
     @property
     def total(self) -> float:
@@ -184,8 +187,9 @@ def read_insight(data: bytes, name: str, into: InsightData | None = None) -> Ins
         if month is None:
             out.notes.append(f"'{name}' 상품별 시트의 월을 알 수 없어 제외했습니다. 파일명에 'n월'을 넣어주세요.")
             continue
+        md = period_from_name(name)
         out.options.append(OptionSheet(source=f"{name} · {title}", month=month, rows=rows,
-                                       partial="TOP" in title.upper()))
+                                       partial="TOP" in title.upper(), md=md if md and md[3] else None))
     if not found:
         raise MonthlyFileError(f"'{name}'에서 '기간별 판매량'(날짜·방문자·매출) 또는 '상품별 판매량'(옵션 ID·판매방식·매출) 시트를 찾지 못했습니다.")
     return out
@@ -198,6 +202,8 @@ AD_ALIASES = {
     "opt": ("광고집행옵션ID",),
     "cost": ("광고비", "광고비(원)"),
     "rev": ("총전환매출액(14일)", "총전환매출액(14일)(원)"),
+    "rev_d": ("직접전환매출액(14일)", "직접전환매출액(14일)(원)"),
+    "conv": ("광고전환매출발생옵션ID",),   # 로켓(Retail) 리포트: 직접 전환 열 대신 전환 옵션ID가 있음 → 같은 옵션이면 직접
     "camp": ("캠페인", "캠페인이름", "캠페인명"),
     "impr": ("노출수",),
     "clicks": ("클릭수",),
@@ -239,8 +245,9 @@ class AdPeriod:
     """날짜 없이 기간 합계로 내려받은 광고 파일."""
     source: str
     md: tuple | None                               # period_from_name 결과
-    opt: dict = field(default_factory=dict)        # {옵션ID: [광고비, 14일 전환매출]}
+    opt: dict = field(default_factory=dict)        # {옵션ID: [광고비, 14일 전환매출, 14일 직접 전환매출]}
     camp: dict = field(default_factory=dict)       # {(캠페인, 옵션ID): [노출, 클릭, 광고비, 14일 주문, 14일 전환매출]}
+    has_direct: bool = False                       # 직접 전환매출 열이 있었는지
     campaigns: set = field(default_factory=set)
     s: date | None = None                          # 분석 시 확정 (연도는 판매 데이터에서)
     e: date | None = None
@@ -258,7 +265,7 @@ class AdPeriod:
 
 @dataclass
 class AdRaw:
-    by_day: dict = field(default_factory=dict)     # {date: [(옵션ID, 광고비, 14일 전환매출)]}
+    by_day: dict = field(default_factory=dict)     # {date: [(옵션ID, 광고비, 14일 전환매출, 14일 직접 전환매출|None)]}
     periods: list = field(default_factory=list)    # [AdPeriod]
     camp_day: dict = field(default_factory=dict)   # {date: {(캠페인, 옵션ID): [노출, 클릭, 광고비, 주문, 전환매출]}}
     names: dict = field(default_factory=dict)      # {옵션ID: 광고집행 상품명}
@@ -279,6 +286,7 @@ def read_ad_raw(data: bytes, name: str, into: AdRaw | None = None) -> AdRaw:
         if i_o is None or i_c is None:
             continue
         i_d, i_r, i_k = _find(hdr, "date"), _find(hdr, "rev"), _find(hdr, "camp")
+        i_rd, i_cv = _find(hdr, "rev_d"), _find(hdr, "conv")
         i_im, i_cl, i_or, i_nm = _find(hdr, "impr"), _find(hdr, "clicks"), _find(hdr, "orders"), _find(hdr, "name")
         val = lambda r, i: num(r[i]) if i is not None else 0.0
         dated: dict = {}
@@ -287,17 +295,21 @@ def read_ad_raw(data: bytes, name: str, into: AdRaw | None = None) -> AdRaw:
         for r in it:
             oid = str(r[i_o]).split(".")[0].strip() if r[i_o] not in (None, "") else ""
             cost, rev = num(r[i_c]), (num(r[i_r]) if i_r is not None else 0.0)
+            rev_d = num(r[i_rd]) if i_rd is not None else None
+            if rev_d is None and i_cv is not None:
+                cv = str(r[i_cv]).split(".")[0].strip() if r[i_cv] not in (None, "") else ""
+                rev_d = rev if cv and cv == oid else 0.0
             d = to_date(r[i_d]) if i_d is not None else None
             camp = str(r[i_k]) if i_k is not None and r[i_k] not in (None, "") else "-"
             kpi = (val(r, i_im), val(r, i_cl), cost, val(r, i_or), rev)
             if i_nm is not None and oid and r[i_nm] not in (None, "", "-"):
                 out.names.setdefault(oid, str(r[i_nm]))
             if d:
-                dated.setdefault(d, []).append((oid, cost, rev))
+                dated.setdefault(d, []).append((oid, cost, rev, rev_d))
                 _add(camp_dated.setdefault(d, {}), (camp, oid), kpi)
             else:
-                v = undated.opt.setdefault(oid, [0.0, 0.0])
-                v[0] += cost; v[1] += rev
+                v = undated.opt.setdefault(oid, [0.0, 0.0, 0.0])
+                v[0] += cost; v[1] += rev; v[2] += rev_d or 0.0
                 _add(undated.camp, (camp, oid), kpi)
             if i_k is not None and r[i_k] not in (None, "", "-"):
                 undated.campaigns.add(str(r[i_k]))
@@ -305,6 +317,7 @@ def read_ad_raw(data: bytes, name: str, into: AdRaw | None = None) -> AdRaw:
             out.by_day.update(dated)
             out.camp_day.update(camp_dated)
         elif undated.opt:
+            undated.has_direct = i_rd is not None or i_cv is not None
             undated.use_total = len(undated.campaigns) >= 2   # 캠페인 1개짜리 파일은 계정 전체가 아님
             out.periods.append(undated)
         return out
