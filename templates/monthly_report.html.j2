@@ -60,6 +60,7 @@
   table.dt tr.item td:first-child{padding-left:26px; font-weight:600;}
   table.dt tr.tot td{font-weight:800; background:var(--indigo-bg);}
   .roas-good{color:var(--good); font-weight:800;} .roas-bad{color:var(--up); font-weight:800;}
+  .q-up{color:var(--up); font-weight:800;} .q-down{color:var(--down); font-weight:800;}
   .bar{display:inline-block; height:8px; border-radius:4px; background:var(--indigo-light); vertical-align:middle;}
   table.mv tr.mrow{cursor:pointer;} table.mv tr.mrow:hover td{background:#F7F6FF;}
   table.mv tr.mrow td.name::before{content:'▸ '; color:var(--indigo);}
@@ -96,7 +97,7 @@
     </div>
     <div class="pc-grid">
       {%- for k in kpis %}
-      {%- set open = 'cost' if (k.label == '광고비' and camp_months) else ('rev' if (k.label == '총매출' and cats) else '') %}
+      {%- set open = 'cost' if (k.label == '광고비' and camp_months) else ('rev' if (k.label == '총매출' and cats) else ('qty' if (k.label == '판매량' and qty_top) else '')) %}
       <div class="pc-card{% if open %} clickable{% endif %}"{% if open %} data-open="{{ open }}" role="button" tabindex="0"{% endif %}>
         <div class="pc-label">{{ k.label }}</div>
         {%- for r in k.rows %}
@@ -107,7 +108,7 @@
         {%- endfor %}
         {{ chg(k.delta) }}
         {%- if k.how %}<div class="pc-diff">{{ k.how }}</div>{% endif %}
-        {%- if open == 'cost' %}<span class="more">캠페인별 보기 ▾</span>{% elif open == 'rev' %}<span class="more">카테고리별 보기 ▾</span>{% endif %}
+        {%- if open == 'cost' %}<span class="more">캠페인별 보기 ▾</span>{% elif open == 'rev' %}<span class="more">카테고리별 보기 ▾</span>{% elif open == 'qty' %}<span class="more">판매 순위 TOP 10 ▾</span>{% endif %}
       </div>
       {%- endfor %}
     </div>
@@ -148,6 +149,34 @@
             <td>{{ '{:,.0f}'.format(cm.total.cpc) }}</td><td>{{ '{:,.0f}'.format(cm.total.orders) }}</td><td>{{ '%.2f'|format(cm.total.cvr) }}%</td></tr>
         </table>
         </div>
+      </div>
+      {%- endfor %}
+    </div>
+    {%- endif %}
+
+    {%- if qty_top %}
+    <div class="kpi-panel" data-panel="qty" hidden>
+      <button type="button" class="close" data-close>닫기 ✕</button>
+      <h3>판매량 상세 — 판매 순위 TOP 10</h3>
+      <p class="sub">등록상품 단위(색상·묶음 옵션 합산) 판매량 순. 증감률은 직전 기간 판매량 대비, 판매량 비중은 그 기간 전체 판매량 대비.</p>
+      <div class="tab-bar" style="margin-top:4px">
+        {%- for q in qty_top %}<button type="button" class="tab-btn{% if loop.last %} active{% endif %}" data-qt="{{ q.id }}">{{ q.label }}</button>{% endfor %}
+      </div>
+      {%- for q in qty_top %}
+      <div class="table-wrap" data-qt-panel="{{ q.id }}" style="margin-top:10px"{% if not loop.last %} hidden{% endif %}>
+        {%- if q.partial %}<p class="sub">상위 상품만 담긴 상품별 시트라 그 범위 안의 순위입니다.</p>{% endif %}
+        <table class="dt">
+          <tr><th>순위</th><th>상품</th><th>채널</th><th>판매량</th><th>비중</th>{% if q.has_prev %}<th>직전 판매량</th><th>증감률</th>{% endif %}<th>매출</th></tr>
+          {%- for r in q.rows %}
+          <tr>
+            <td>{{ r.rank }}</td><td class="nm">{{ r.name }}</td><td>{{ r.ch }}</td>
+            <td>{{ '{:,.0f}'.format(r.qty) }}개</td><td>{{ '%.1f'|format(r.share) }}%</td>
+            {%- if q.has_prev %}<td>{{ '{:,.0f}'.format(r.prev_qty) ~ '개' if r.prev_qty is not none else '-' }}</td>
+            <td>{% if r.chg == 'new' %}<span class="q-up">NEW</span>{% elif r.chg is not none %}<span class="q-{{ 'up' if r.chg > 0 else 'down' }}">{{ '▲' if r.chg > 0 else ('▼' if r.chg < 0 else '') }} {{ '{:,.1f}'.format(r.chg|abs) }}%</span>{% else %}-{% endif %}</td>{% endif %}
+            <td>{{ '{:,.0f}'.format(r.rev) }}</td>
+          </tr>
+          {%- endfor %}
+        </table>
       </div>
       {%- endfor %}
     </div>
@@ -418,6 +447,12 @@
     tr.addEventListener('click', function(){
       var open = !tr.classList.contains('open'); tr.classList.toggle('open', open);
       document.querySelectorAll('[data-of="' + tr.dataset.camp + '"]').forEach(function(x){ x.hidden = !open; });
+    });
+  });
+  document.querySelectorAll('[data-qt]').forEach(function(b){
+    b.addEventListener('click', function(){
+      document.querySelectorAll('[data-qt]').forEach(function(x){ x.classList.toggle('active', x === b); });
+      document.querySelectorAll('[data-qt-panel]').forEach(function(p){ p.hidden = p.dataset.qtPanel !== b.dataset.qt; });
     });
   });
   document.querySelectorAll('[data-cat]').forEach(function(b){

@@ -453,6 +453,31 @@ ITEM_GROUPS = [
 ]
 
 
+def qty_ranking(months: list[dict], prod_by_month: dict, top_n: int = 10) -> list[dict]:
+    """기간별 판매량 TOP N (등록상품 단위). 직전 기간 판매량과 증감률을 같이 붙인다."""
+    out, prev_rank, prev_rows = [], {}, {}
+    for t in months:
+        if t["m"] not in prod_by_month:
+            prev_rank, prev_rows = {}, {}
+            continue
+        sheet = prod_by_month[t["m"]][0]
+        ranked = sorted((p for p in sheet.rows.values() if (p.get("qty") or 0) > 0), key=lambda p: (-p["qty"], -p["rev"]))
+        keys = {id(p): k for k, p in sheet.rows.items()}
+        tot = sum(p["qty"] for p in ranked)
+        rows = []
+        for i, p in enumerate(ranked[:top_n], 1):
+            k = keys[id(p)]
+            pq = prev_rows[k]["qty"] if k in prev_rows else None
+            rows.append({"rank": i, "name": p["name"], "ch": p.get("ch", ""), "qty": p["qty"], "rev": p["rev"],
+                         "share": p["qty"] / tot * 100 if tot else 0, "prev_qty": pq,
+                         "chg": None if not prev_rank else ("new" if not pq else (p["qty"] / pq - 1) * 100)})
+        out.append({"id": f"q{t['m']}", "label": t["tag"], "rows": rows, "total": tot, "partial": sheet.partial,
+                    "has_prev": bool(prev_rank)})
+        prev_rank = {keys[id(p)]: i for i, p in enumerate(ranked, 1)}
+        prev_rows = sheet.rows
+    return out
+
+
 def item_group(name: str) -> str:
     n = re.sub(r"전구색|주광색|주백색|색온도", "", name.lower())  # 색상 표기('전구색')가 '전구'로 잡히지 않게
     for g, kws in ITEM_GROUPS:
@@ -786,7 +811,8 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
             "headline": s.headline or headline, "headline_sub": s.headline_sub or sub,
             "auto_headline": headline, "auto_headline_sub": sub,
             "movers": mover_sets, "ad": ad, "checks": checks, "camp_months": camp_months, "cats": cats,
-            "period_label": period_label, "recent": recent, "L": words, "comp_note": comp_insight(months), "comp_extra": []}
+            "period_label": period_label, "recent": recent, "L": words, "comp_note": comp_insight(months), "comp_extra": [],
+            "qty_top": qty_ranking(months, prod_by_month)}
 
 
 def comp_insight(months: list[dict]) -> list[str]:
