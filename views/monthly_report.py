@@ -21,7 +21,8 @@ if "monthly_reports" not in st.session_state:
 
 # 업로드 데이터는 서버 메모리에만 잠시 캐시 (1시간)
 # 읽는 방식(read_insight)이 바뀌면 이 숫자를 올린다 — 재배포 후에도 예전 형식의 캐시가 쓰이지 않게
-INSIGHT_PARSER_VER = 3   # 3: 로켓배송(서플라이어 허브) 상품별 판매 CSV/엑셀 지원
+INSIGHT_PARSER_VER = 4   # 3: 로켓배송(서플라이어 허브) 상품별 판매 CSV/엑셀 지원 · 4: 상품별 파일명 기간(2주 비교)
+AD_PARSER_VER = 2        # 2: 직접 전환매출(14일)·전환 옵션ID 읽기 (자연매출 판매현황 기준)
 @st.cache_data(show_spinner="판매 데이터를 읽는 중…", ttl=3600, max_entries=16)
 def _insight(files: tuple, parser_ver: int) -> InsightData:
     ins = InsightData()
@@ -31,7 +32,7 @@ def _insight(files: tuple, parser_ver: int) -> InsightData:
 
 
 @st.cache_data(show_spinner="광고 데이터를 읽는 중… (큰 파일은 수십 초)", ttl=3600, max_entries=8)
-def _ad_raw(files: tuple) -> AdRaw:
+def _ad_raw(files: tuple, parser_ver: int) -> AdRaw:
     raw = AdRaw()
     for name, data in files:
         read_ad_raw(data, name, raw)
@@ -85,7 +86,7 @@ def make_tab():
 
     try:
         ins = _insight(tuple((f.name, f.getvalue()) for f in ins_files), INSIGHT_PARSER_VER)
-        raw = _ad_raw(tuple((f.name, f.getvalue()) for f in raw_files)) if raw_files else None
+        raw = _ad_raw(tuple((f.name, f.getvalue()) for f in raw_files), AD_PARSER_VER) if raw_files else None
     except MonthlyFileError as e:
         st.error(str(e))
         return
