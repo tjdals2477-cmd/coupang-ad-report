@@ -768,6 +768,8 @@ def build_context(ins: InsightData, raw: AdRaw | None, dash: list | None, s: Mon
                 if abs(gap) > 1:
                     checks.append(("warn", f"{tag}와 대시보드 같은 기간 광고비({won(dsum)})가 {gap:+.1f}% 다릅니다. 광고보고서 값을 사용합니다."))
     checks.extend(("warn", n) for n in ins.notes)
+    if raw:
+        checks.extend(("warn", n) for n in raw.notes)
 
     # KPI 카드 상세: 캠페인별 광고 · 카테고리별 매출
     camp_months = []

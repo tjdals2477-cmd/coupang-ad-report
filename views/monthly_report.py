@@ -21,8 +21,8 @@ if "monthly_reports" not in st.session_state:
 
 # 업로드 데이터는 서버 메모리에만 잠시 캐시 (1시간)
 # 읽는 방식(read_insight)이 바뀌면 이 숫자를 올린다 — 재배포 후에도 예전 형식의 캐시가 쓰이지 않게
-INSIGHT_PARSER_VER = 4   # 3: 로켓배송(서플라이어 허브) 상품별 판매 CSV/엑셀 지원 · 4: 상품별 파일명 기간(2주 비교)
-AD_PARSER_VER = 2        # 2: 직접 전환매출(14일)·전환 옵션ID 읽기 (자연매출 판매현황 기준)
+INSIGHT_PARSER_VER = 5   # 3: 로켓배송 상품별 CSV · 4: 상품별 파일명 기간(2주 비교) · 5: 파일명 기간 밖 날짜 제외
+AD_PARSER_VER = 3        # 2: 직접 전환매출·전환 옵션ID · 3: 파일명 기간 밖 날짜 제외
 @st.cache_data(show_spinner="판매 데이터를 읽는 중…", ttl=3600, max_entries=16)
 def _insight(files: tuple, parser_ver: int) -> InsightData:
     ins = InsightData()

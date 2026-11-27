@@ -12,7 +12,7 @@ import io
 import re
 import warnings
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import openpyxl
 
@@ -37,10 +37,15 @@ def to_date(v) -> date | None:
         return v.date()
     if isinstance(v, date):
         return v
+    if isinstance(v, (int, float)) and not isinstance(v, bool) and 19000101 <= v <= 21001231 and float(v).is_integer():
+        v = str(int(v))   # 쿠팡 광고 리포트의 20261019(.0) 형식
     if isinstance(v, str):
-        m = re.match(r"\s*(\d{4})[-./](\d{1,2})[-./](\d{1,2})", v)
+        m = re.match(r"\s*(\d{4})[-./](\d{1,2})[-./](\d{1,2})", v) or re.fullmatch(r"\s*(\d{4})(\d{2})(\d{2})(?:\.0+)?\s*", v)
         if m:
-            return date(int(m[1]), int(m[2]), int(m[3]))
+            try:
+                return date(int(m[1]), int(m[2]), int(m[3]))
+            except ValueError:
+                return None
     return None
 
 
@@ -145,16 +150,18 @@ def read_insight(data: bytes, name: str, into: InsightData | None = None) -> Ins
             ix = {h: hdr.index(h) for h in DAILY_COLS}
             i_view = hdr.index("조회") if "조회" in hdr else None
             i_qty = hdr.index("판매량") if "판매량" in hdr else None
-            months = []
+            months, rows_d = [], {}
             for r in it:
                 d = to_date(r[ix["날짜"]])
                 if not d:
                     continue  # 하단 총계 행
-                out.daily[d] = {"vis": num(r[ix["방문자"]]), "ord": num(r[ix["주문"]]),
+                rows_d[d] = {"vis": num(r[ix["방문자"]]), "ord": num(r[ix["주문"]]),
                                 "view": num(r[i_view]) if i_view is not None else 0.0,
                                 "qty": num(r[i_qty]) if i_qty is not None else None,
                                 "cvr": num(r[ix["구매전환율"]]), "rev": num(r[ix["매출(원)"]])}
-                months.append(d.month)
+            rows_d = clip_to_name(rows_d, name, "기간별 판매", out.notes)
+            out.daily.update(rows_d)
+            months = [d.month for d in rows_d]
             if months:
                 daily_month = max(set(months), key=months.count)
                 found = True
@@ -240,6 +247,47 @@ def period_from_name(name: str) -> tuple | None:
     return (mo, 1, mo, 0) if mo else None
 
 
+def name_range(name: str, dates) -> tuple[date, date] | None:
+    """파일명 기간을 데이터의 연도로 날짜 범위로 바꿈. 월만 있으면(예: 9월) 그 달 1일~말일."""
+    md = period_from_name(name)
+    ds = sorted(dates)
+    if not md or not ds:
+        return None
+    m1, d1, m2, d2 = md
+    ys = {d.month: d.year for d in ds}
+    y1 = ys.get(m1, ds[-1].year)
+    y2 = y1 + (1 if m2 < m1 else 0)
+    try:
+        s = date(y1, m1, d1)
+        e = date(y2, m2, d2) if d2 else (date(y2 + (m2 == 12), m2 % 12 + 1, 1) - timedelta(days=1))
+    except ValueError:
+        return None
+    return (s, e) if s <= e else None
+
+
+def clip_to_name(rows: dict, name: str, what: str, notes: list) -> dict:
+    """날짜별 데이터에서 파일명 기간 밖의 날짜를 빼고 안내 문구를 남김 (예: 파일명은 10/29~11/11인데 10/19부터 들어 있는 경우)."""
+    rg = name_range(name, rows.keys())
+    if not rg:
+        return rows
+    s, e = rg
+    out = {d: v for d, v in rows.items() if s <= d <= e}
+    drop = sorted(d for d in rows if not (s <= d <= e))
+    lab = lambda d: f"{d.month}/{d.day}"
+    if drop and out:
+        notes.append(f"'{name}' {what}에 파일명 기간({lab(s)}~{lab(e)}) 밖의 날짜 {len(drop)}일"
+                     f"({lab(drop[0])}~{lab(drop[-1])})이 들어 있어 빼고 계산했습니다. 내려받을 때 기간 설정을 확인해 주세요.")
+    elif drop and not out:
+        notes.append(f"'{name}' {what}의 날짜({lab(drop[0])}~{lab(drop[-1])})가 파일명 기간({lab(s)}~{lab(e)})과 전혀 겹치지 않아 "
+                     f"파일명 기간을 무시하고 그대로 썼습니다. 파일명이나 내려받은 기간을 확인해 주세요.")
+        return rows
+    if out:
+        a, b = min(out), max(out)
+        if (a - s).days > 1 or (e - b).days > 1:
+            notes.append(f"'{name}' {what}는 {lab(a)}~{lab(b)}만 있어 파일명 기간({lab(s)}~{lab(e)})보다 짧습니다.")
+    return out
+
+
 @dataclass
 class AdPeriod:
     """날짜 없이 기간 합계로 내려받은 광고 파일."""
@@ -269,6 +317,7 @@ class AdRaw:
     periods: list = field(default_factory=list)    # [AdPeriod]
     camp_day: dict = field(default_factory=dict)   # {date: {(캠페인, 옵션ID): [노출, 클릭, 광고비, 주문, 전환매출]}}
     names: dict = field(default_factory=dict)      # {옵션ID: 광고집행 상품명}
+    notes: list = field(default_factory=list)      # 파일명 기간과 데이터 기간이 다를 때 안내
 
 
 def read_ad_raw(data: bytes, name: str, into: AdRaw | None = None) -> AdRaw:
@@ -314,8 +363,9 @@ def read_ad_raw(data: bytes, name: str, into: AdRaw | None = None) -> AdRaw:
             if i_k is not None and r[i_k] not in (None, "", "-"):
                 undated.campaigns.add(str(r[i_k]))
         if dated:
+            dated = clip_to_name(dated, name, "광고 데이터", out.notes)
             out.by_day.update(dated)
-            out.camp_day.update(camp_dated)
+            out.camp_day.update({d: v for d, v in camp_dated.items() if d in dated})
         elif undated.opt:
             undated.has_direct = i_rd is not None or i_cv is not None
             undated.use_total = len(undated.campaigns) >= 2   # 캠페인 1개짜리 파일은 계정 전체가 아님

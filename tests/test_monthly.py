@@ -449,3 +449,34 @@ class FilePeriodTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NameClipTest(unittest.TestCase):
+    """파일명 기간(10월 29일-11월 11일)보다 데이터가 길면(10/19부터) 기간 밖 날짜를 빼고 안내."""
+
+    def _ad(self, days, name):
+        wb = openpyxl.Workbook(); ws = wb.active
+        ws.append(["날짜", "캠페인명", "광고집행 옵션ID", "광고비", "총 전환매출액(14일)"])
+        for d in days:
+            ws.append([int(d.strftime("%Y%m%d")), "c1", "111", 1000, 5000])
+        b = io.BytesIO(); wb.save(b)
+        return read_ad_raw(b.getvalue(), name)
+
+    def test_clip_outside_dates(self):
+        days = [date(2026, 10, 19) + timedelta(days=i) for i in range(24)]   # 10/19~11/11
+        raw = self._ad(days, "디앤앤_광고보고서_10월 29일- 11월 11일.xlsx")
+        self.assertEqual(min(raw.by_day), date(2026, 10, 29))
+        self.assertEqual(len(raw.by_day), 14)
+        self.assertTrue(any("10/19~10/28" in n for n in raw.notes))
+
+    def test_no_clip_when_inside(self):
+        days = [date(2026, 11, 12) + timedelta(days=i) for i in range(14)]
+        raw = self._ad(days, "디앤앤_광고보고서_11월 12일-25일.xlsx")
+        self.assertEqual(len(raw.by_day), 14)
+        self.assertEqual(raw.notes, [])
+
+    def test_no_overlap_keeps_data(self):
+        days = [date(2026, 9, 1) + timedelta(days=i) for i in range(5)]
+        raw = self._ad(days, "광고보고서_11월 12일-25일.xlsx")
+        self.assertEqual(len(raw.by_day), 5)
+        self.assertTrue(raw.notes)
